@@ -35,6 +35,7 @@ def load_multimodal_model(
     trust_remote_code: bool,
     torch_dtype: torch.dtype | None,
     attn_implementation: str | None = None,
+    device_map: str | None = None,
 ) -> Any:
     model_class = resolve_model_class()
     config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=trust_remote_code)
@@ -44,6 +45,8 @@ def load_multimodal_model(
         kwargs["dtype"] = torch_dtype
     if attn_implementation:
         kwargs["attn_implementation"] = attn_implementation
+    if device_map is not None:
+        kwargs["device_map"] = device_map
 
     model = model_class.from_pretrained(model_name_or_path, config=config, **kwargs)
     return model
