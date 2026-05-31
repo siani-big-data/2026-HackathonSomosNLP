@@ -223,6 +223,7 @@ def stream_generate_examples(
             generated = generate_single_example(model, tokenizer, record, task_type, style_examples)
             if generated is None:
                 continue
+            role_profile = choose_role(rng)
 
             row = {
                 "id": f"model::{record.id}::{task_type}",
@@ -233,7 +234,11 @@ def stream_generate_examples(
                 "city": generated.get("city", infer_city(record)),
                 "source": record.source,
                 "source_id": record.id,
-                "system_prompt": normalize_text(str(generated["system_prompt"])),
+                "system_prompt": build_manual_system_prompt(
+                    task_type=generated["type"],
+                    city=generated.get("city", infer_city(record)),
+                    role_profile=role_profile,
+                ),
                 "prompt": normalize_text(str(generated["prompt"])),
                 "assistant_response": normalize_text(str(generated["assistant_response"])),
                 "model_gen": MODEL_NAME_OR_PATH,
