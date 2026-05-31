@@ -118,14 +118,15 @@ def main() -> None:
     model.eval()
 
     print(f"[3/4] Generando ejemplos a partir de {len(records)} registros...")
-    prompt_rows = generate_examples(model, tokenizer, records, rng, style_examples)
-    sft_rows = to_sft_rows(prompt_rows)
+    prompt_count, sft_count = stream_generate_examples(
+        model=model,
+        tokenizer=tokenizer,
+        records=records,
+        rng=rng,
+        style_examples=style_examples,
+    )
 
-    write_jsonl(PROMPTS_OUTPUT_PATH, prompt_rows)
-    write_jsonl(SFT_OUTPUT_PATH, sft_rows)
-    write_prompt_csv(CSV_OUTPUT_PATH, prompt_rows)
-
-    print(f"[4/4] Listo. prompts={len(prompt_rows)} sft={len(sft_rows)}")
+    print(f"[4/4] Listo. prompts={prompt_count} sft={sft_count}")
     print(f"Prompts: {PROMPTS_OUTPUT_PATH}")
     print(f"SFT: {SFT_OUTPUT_PATH}")
 
@@ -192,6 +193,98 @@ def generate_examples(
 
     rng.shuffle(rows)
     return rows
+
+
+def stream_generate_examples(
+    model: Any,
+    tokenizer: Any,
+    records: list[Record],
+    rng: random.Random,
+    style_examples: str,
+) -> tuple[int, int]:
+    fieldnames = ["id", "prompt", "pais", "region", "city", "type", "system_prompt", "source", "source_id", "modelo_gen"]
+    prompt_count = 0
+    sft_count = 0
+
+    with (
+        PROMPTS_OUTPUT_PATH.open("w", encoding="utf-8") as prompts_handle,
+        SFT_OUTPUT_PATH.open("w", encoding="utf-8") as sft_handle,
+        CSV_OUTPUT_PATH.open("w", encoding="utf-8", newline="") as csv_handle,
+    ):
+        csv_writer = csv.DictWriter(csv_handle, fieldnames=fieldnames)
+        csv_writer.writeheader()
+
+        for index, record in enumerate(records, start=1):
+            task_type = TARGET_TYPES[(index - 1) % len(TARGET_TYPES)]
+            generated = generate_single_example(model, tokenizer, record, task_type, style_examples)
+            if generated is None:
+                continue
+
+            row = {
+                "id": f"model::{record.id}::{task_type}",
+                "split": assign_split(record.id),
+                "type": generated["type"],
+                "country": generated.get("country", "España"),
+                "region": generated.get("region", "Canarias"),
+                "city": generated.get("city", infer_city(record)),
+                "source": record.source,
+                "source_id": record.id,
+                "system_prompt": normalize_text(str(generated["system_prompt"])),
+                "prompt": normalize_text(str(generated["prompt"])),
+                "assistant_response": normalize_text(str(generated["assistant_response"])),
+                "model_gen": MODEL_NAME_OR_PATH,
+            }
+
+            sft_row = {
+                "id": row["id"],
+                "messages": [
+                    {"role": "system", "content": row["system_prompt"]},
+                    {"role": "user", "content": row["prompt"]},
+                    {"role": "assistant", "content": row["assistant_response"]},
+                ],
+                "metadata": {
+                    "split": row["split"],
+                    "type": row["type"],
+                    "country": row["country"],
+                    "region": row["region"],
+                    "city": row["city"],
+                    "source": row["source"],
+                    "source_id": row["source_id"],
+                    "model_gen": row["model_gen"],
+                },
+            }
+
+            prompts_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            sft_handle.write(json.dumps(sft_row, ensure_ascii=False) + "\n")
+            csv_writer.writerow(
+                {
+                    "id": row["id"],
+                    "prompt": row["prompt"],
+                    "pais": row["country"],
+                    "region": row["region"],
+                    "city": row["city"],
+                    "type": row["type"],
+                    "system_prompt": row["system_prompt"],
+                    "source": row["source"],
+                    "source_id": row["source_id"],
+                    "modelo_gen": row["model_gen"],
+                }
+            )
+
+            prompt_count += 1
+            sft_count += 1
+
+            if prompt_count % 10 == 0:
+                prompts_handle.flush()
+                sft_handle.flush()
+                csv_handle.flush()
+                print(f"[stream] prompts={prompt_count} procesados={index}/{len(records)}")
+
+        prompts_handle.flush()
+        sft_handle.flush()
+        csv_handle.flush()
+
+    return prompt_count, sft_count
 
 
 def generate_single_example(
@@ -374,6 +467,40 @@ def write_prompt_csv(path: Path, rows: list[dict[str, object]]) -> None:
                     "modelo_gen": row["model_gen"],
                 }
             )
+
+
+def stream_write_jsonl(path: Path, rows: list[dict[str, object]], label: str) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for index, row in enumerate(rows, start=1):
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            if index % 25 == 0 or index == len(rows):
+                handle.flush()
+                print(f"[write:{label}] {index}/{len(rows)}")
+
+
+def stream_write_prompt_csv(path: Path, rows: list[dict[str, object]]) -> None:
+    fieldnames = ["id", "prompt", "pais", "region", "city", "type", "system_prompt", "source", "source_id", "modelo_gen"]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for index, row in enumerate(rows, start=1):
+            writer.writerow(
+                {
+                    "id": row["id"],
+                    "prompt": row["prompt"],
+                    "pais": row["country"],
+                    "region": row["region"],
+                    "city": row["city"],
+                    "type": row["type"],
+                    "system_prompt": row["system_prompt"],
+                    "source": row["source"],
+                    "source_id": row["source_id"],
+                    "modelo_gen": row["model_gen"],
+                }
+            )
+            if index % 25 == 0 or index == len(rows):
+                handle.flush()
+                print(f"[write:model_csv] {index}/{len(rows)}")
 
 
 if __name__ == "__main__":

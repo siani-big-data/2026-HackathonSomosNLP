@@ -87,10 +87,10 @@ def main() -> None:
     prompt_rows = build_prompt_rows(records, rng)
     sft_rows = build_sft_rows(prompt_rows)
     raft_rows = build_raft_rows(records, rng)
-    write_jsonl(PROMPTS_OUTPUT_PATH, prompt_rows)
-    write_jsonl(SFT_OUTPUT_PATH, sft_rows)
-    write_jsonl(RAFT_OUTPUT_PATH, raft_rows)
-    write_prompt_csv(CSV_OUTPUT_PATH, prompt_rows)
+    stream_write_jsonl(PROMPTS_OUTPUT_PATH, prompt_rows, "prompts")
+    stream_write_jsonl(SFT_OUTPUT_PATH, sft_rows, "sft")
+    stream_write_jsonl(RAFT_OUTPUT_PATH, raft_rows, "raft")
+    stream_write_prompt_csv(CSV_OUTPUT_PATH, prompt_rows)
     print(f"prompts={len(prompt_rows)} sft={len(sft_rows)} raft={len(raft_rows)}")
     print(f"Prompts: {PROMPTS_OUTPUT_PATH}")
     print(f"SFT: {SFT_OUTPUT_PATH}")
@@ -476,6 +476,40 @@ def write_prompt_csv(path: Path, rows: list[dict[str, object]]) -> None:
                     "modelo_gen": row["model_gen"],
                 }
             )
+
+
+def stream_write_jsonl(path: Path, rows: list[dict[str, object]], label: str) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for index, row in enumerate(rows, start=1):
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            if index % 100 == 0 or index == len(rows):
+                handle.flush()
+                print(f"[write:{label}] {index}/{len(rows)}")
+
+
+def stream_write_prompt_csv(path: Path, rows: list[dict[str, object]]) -> None:
+    fieldnames = ["id", "prompt", "pais", "region", "city", "type", "system_prompt", "source", "source_id", "modelo_gen"]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for index, row in enumerate(rows, start=1):
+            writer.writerow(
+                {
+                    "id": row["id"],
+                    "prompt": row["prompt"],
+                    "pais": row["country"],
+                    "region": row["region"],
+                    "city": row["city"],
+                    "type": row["type"],
+                    "system_prompt": row["system_prompt"],
+                    "source": row["source"],
+                    "source_id": row["source_id"],
+                    "modelo_gen": row["model_gen"],
+                }
+            )
+            if index % 100 == 0 or index == len(rows):
+                handle.flush()
+                print(f"[write:csv] {index}/{len(rows)}")
 
 
 if __name__ == "__main__":
