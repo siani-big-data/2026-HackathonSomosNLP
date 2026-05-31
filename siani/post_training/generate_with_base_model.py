@@ -69,7 +69,6 @@ Requisitos obligatorios:
 
 Devuelve exclusivamente un objeto JSON con estas claves:
 {{
-  "system_prompt": "...",
   "prompt": "...",
   "assistant_response": "...",
   "country": "España",
@@ -172,6 +171,7 @@ def generate_examples(
         if generated is None:
             continue
 
+        role_profile = choose_role(rng)
         row = {
             "id": f"model::{record.id}::{task_type}",
             "split": assign_split(record.id),
@@ -181,7 +181,11 @@ def generate_examples(
             "city": generated.get("city", infer_city(record)),
             "source": record.source,
             "source_id": record.id,
-            "system_prompt": normalize_text(str(generated["system_prompt"])),
+            "system_prompt": build_manual_system_prompt(
+                task_type=generated["type"],
+                city=generated.get("city", infer_city(record)),
+                role_profile=role_profile,
+            ),
             "prompt": normalize_text(str(generated["prompt"])),
             "assistant_response": normalize_text(str(generated["assistant_response"])),
             "model_gen": MODEL_NAME_OR_PATH,
@@ -330,7 +334,7 @@ def generate_single_example(
     if payload is None:
         return None
 
-    required = {"system_prompt", "prompt", "assistant_response", "type"}
+    required = {"prompt", "assistant_response", "type"}
     if not required.issubset(payload):
         return None
     return payload
@@ -409,6 +413,77 @@ def infer_city(record: Record) -> str:
     if "la palma" in lowered:
         return "Santa Cruz de La Palma"
     return "Las Palmas de Gran Canaria"
+
+
+def choose_role(rng: random.Random) -> dict[str, str]:
+    return rng.choice(
+        [
+            {
+                "gender": "mujer",
+                "age": "32 años",
+                "class": "clase trabajadora",
+                "education": "FP superior",
+                "occupation": "auxiliar administrativa",
+                "anchor": "vive en Gran Canaria y está acostumbrada a explicar referencias locales con naturalidad",
+            },
+            {
+                "gender": "hombre",
+                "age": "54 años",
+                "class": "clase media baja",
+                "education": "bachillerato",
+                "occupation": "autónomo",
+                "anchor": "reside en Tenerife y cuida el tono según con quién hable",
+            },
+            {
+                "gender": "mujer",
+                "age": "24 años",
+                "class": "clase media",
+                "education": "universitaria",
+                "occupation": "estudiante y trabajadora del sector servicios",
+                "anchor": "vive entre entornos formales e informales y adapta bien el registro",
+            },
+            {
+                "gender": "hombre",
+                "age": "67 años",
+                "class": "clase popular",
+                "education": "primaria",
+                "occupation": "jubilado",
+                "anchor": "ha vivido siempre en su isla y usa referencias locales de forma espontánea",
+            },
+        ]
+    )
+
+
+def build_manual_system_prompt(task_type: str, city: str, role_profile: dict[str, str]) -> str:
+    task_instructions = {
+        "type_1_knowledge": (
+            "Responde como alguien del lugar que conoce el contexto vivido. "
+            "No conviertas la respuesta en una definición de diccionario ni en trivia."
+        ),
+        "type_2_preference": (
+            "Responde como alguien de ese entorno social concreto. "
+            "Si hay varias respuestas plausibles, prioriza la que suene más natural para ese perfil."
+        ),
+        "type_3_preference_intersectional": (
+            "Evalúa las opciones desde el perfil social indicado y justifica la elección sin esencializar a toda Canarias."
+        ),
+        "type_4_dynamic": (
+            "Cuida mucho el registro y la naturalidad del diálogo. "
+            "Haz que la respuesta suene dicha por una persona real de Canarias."
+        ),
+        "type_5_bias": (
+            "Responde evitando estereotipos y sesgos de prestigio. "
+            "Valora criterios observables y explícitos, no intuiciones sobre origen, clase o acento."
+        ),
+    }
+    base = (
+        f"Eres una persona de {city}, Canarias: {role_profile['gender']}, de {role_profile['age']}, "
+        f"{role_profile['class']}, con formación {role_profile['education']}, "
+        f"que trabaja como {role_profile['occupation']}. {role_profile['anchor']}. "
+        "Hablas y escribes con naturalidad canaria cuando el contexto lo permite, "
+        "sin caricaturizar ni forzar canarismos. "
+    )
+    return base + task_instructions.get(task_type, "Responde con matiz local, claridad y naturalidad.")
 
 
 def extract_corpecan_style_examples(records: list[Record]) -> str:
