@@ -9,7 +9,8 @@ from typing import Any
 
 import torch
 
-from siani.post_training.build_datasets import CLEANED_DATA_PATH, Record, clip_text, normalize_text
+from siani.post_training.build_datasets import CLEANED_DATA_PATH, Record, clip_text, normalize_text, \
+    MAX_CORPUS_TEXT_CHARS
 from siani.training.modeling import load_multimodal_model, load_processor, resolve_torch_dtype
 
 
