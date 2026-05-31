@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
-from siani.scrapper import ScraperConfig, DatasetScraper, ScrapeResult
+from siani.data_preparation.scrapper import ScraperConfig, DatasetScraper, ScrapeResult
 
 DEFAULT_API_URL = "https://www3.gobiernodecanarias.org/medusa/wiki/api.php"
 USER_AGENT = "SomosNLP-dataset-scrappers/0.1 (+local research dataset builder)"

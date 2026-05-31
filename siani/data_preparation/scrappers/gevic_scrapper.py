@@ -15,7 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import Request, urlopen
 
-from siani.scrapper import DatasetScraper, ScrapeResult, ScraperConfig
+from siani.data_preparation.scrapper import DatasetScraper, ScrapeResult, ScraperConfig
 
 BASE_URL = "https://www.gevic.net"
 DEFAULT_INDEX_URL = f"{BASE_URL}/indice_Global.php?modo=1"

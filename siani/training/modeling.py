@@ -26,6 +26,7 @@ def load_processor(processor_name_or_path: str, trust_remote_code: bool) -> Any:
     return AutoProcessor.from_pretrained(
         processor_name_or_path,
         trust_remote_code=trust_remote_code,
+        use_fast=True,
     )
 
 
@@ -38,11 +39,9 @@ def load_multimodal_model(
     model_class = resolve_model_class()
     config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=trust_remote_code)
 
-    kwargs = {
-        "trust_remote_code": trust_remote_code,
-    }
+    kwargs = {"trust_remote_code": trust_remote_code}
     if torch_dtype is not None:
-        kwargs["torch_dtype"] = torch_dtype
+        kwargs["dtype"] = torch_dtype
     if attn_implementation:
         kwargs["attn_implementation"] = attn_implementation
 
@@ -95,4 +94,4 @@ def resolve_model_class() -> Any:
             return model_class
 
     raise RuntimeError("No compatible Hugging Face multimodal model class was found in transformers.")
-
+ 

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from siani.scrappers.academia_consultations_scrapper import AcademiaConsultationsConfig, AcademiaConsultationsScraper
-from siani.scrappers.academia_dictionary_scrapper import AcademiaDictionaryConfig, AcademiaDictionaryScraper
-from siani.scrappers.canariawiki_scrapper import CanariWikiConfig, CanariWikiScraper
-from siani.scrappers.corpecan_scrapper import CorpecanConfig, CorpecanScraper
-from siani.scrappers.gevic_scrapper import GevicConfig, GevicScraper
+from siani.data_preparation.scrappers.academia_consultations_scrapper import AcademiaConsultationsConfig, AcademiaConsultationsScraper
+from siani.data_preparation.scrappers.academia_dictionary_scrapper import AcademiaDictionaryConfig, AcademiaDictionaryScraper
+from siani.data_preparation.scrappers.canariawiki_scrapper import CanariWikiConfig, CanariWikiScraper
+from siani.data_preparation.scrappers.corpecan_scrapper import CorpecanConfig, CorpecanScraper
+from siani.data_preparation.scrappers.gevic_scrapper import GevicConfig, GevicScraper
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path: sys.path.insert(0, str(PROJECT_ROOT))

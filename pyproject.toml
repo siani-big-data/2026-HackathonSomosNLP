@@ -27,4 +27,5 @@ dependencies = [
     "trafilatura>=2.0.0",
     "transformers>=4.57.0",
     "unstructured>=0.22.31",
+    "tensorboard>=2.20.0",
 ]

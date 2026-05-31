@@ -31,7 +31,14 @@ class MultimodalDocumentCollator:
             image = self._load_image(feature.image_path) if self.config.include_images else None
             any_image = any_image or image is not None
             images.append(image)
-            texts.append(self._build_rendered_text(feature, image_present=image is not None))
+        for feature, image in zip(features, images):
+            texts.append(
+                self._build_rendered_text(
+                    feature,
+                    image_present=any_image,
+                    image_is_placeholder=image is None,
+                )
+            )
 
         batch = self._processor_call(texts=texts, images=images if any_image else None)
         labels = batch["input_ids"].clone()
@@ -51,15 +58,11 @@ class MultimodalDocumentCollator:
         texts: list[str],
         images: list[Image.Image | None] | None,
     ) -> dict[str, torch.Tensor]:
-        processor_kwargs = {
-            "text": texts,
-            "return_tensors": "pt",
-            "padding": True,
-            "truncation": True,
-            "max_length": self.config.max_length,
-        }
+        processor_kwargs = {"text": texts, "return_tensors": "pt", "padding": True}
 
         if images is None:
+            processor_kwargs["truncation"] = True
+            processor_kwargs["max_length"] = self.config.max_length
             return self.processor(**processor_kwargs)
 
         normalized_images = [image if image is not None else Image.new("RGB", (32, 32), color=0) for image in images]
@@ -68,16 +71,30 @@ class MultimodalDocumentCollator:
             return self.processor(images=normalized_images, **processor_kwargs)
         except TypeError:
             texts = [text if image is not None else f"{text}\n[sin_imagen]" for text, image in zip(texts, images)]
-            return self.processor(text=texts, return_tensors="pt", padding=True, truncation=True, max_length=self.config.max_length)
+            return self.processor(
+                text=texts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=self.config.max_length,
+            )
 
-    def _build_rendered_text(self, feature: TrainingExample, image_present: bool) -> str:
+    def _build_rendered_text(
+        self,
+        feature: TrainingExample,
+        image_present: bool,
+        image_is_placeholder: bool,
+    ) -> str:
         if hasattr(self.processor, "apply_chat_template"):
             content: list[dict[str, str]] = [{"type": "text", "text": feature.prompt_text}]
             if feature.attachment_context:
                 content.append({"type": "text", "text": feature.attachment_context})
             if image_present:
                 content.append({"type": "image"})
-                content.append({"type": "text", "text": self.config.image_token_hint})
+                hint = self.config.image_token_hint
+                if image_is_placeholder:
+                    hint = "No hay imagen válida para este documento; usa solo el texto y el contexto estructurado."
+                content.append({"type": "text", "text": hint})
 
             messages = [
                 {"role": "user", "content": content},
@@ -105,4 +122,3 @@ class MultimodalDocumentCollator:
                 return image.convert("RGB")
         except (OSError, UnidentifiedImageError):
             return None
-

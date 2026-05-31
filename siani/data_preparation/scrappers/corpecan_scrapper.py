@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from siani.scrapper import DatasetScraper, ScrapeResult, ScraperConfig
+from siani.data_preparation.scrapper import DatasetScraper, ScrapeResult, ScraperConfig
 
 BASE_URL = "https://corpecan.academiacanarialengua.org"
 DEFAULT_API_URL = f"{BASE_URL}/wp-json/wp/v2"

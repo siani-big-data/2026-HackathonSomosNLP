@@ -13,7 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
-from siani.scrapper import DatasetScraper, ScrapeResult, ScraperConfig
+from siani.data_preparation.scrapper import DatasetScraper, ScrapeResult, ScraperConfig
 
 BASE_URL = "https://www.academiacanarialengua.org"
 DEFAULT_DICTIONARY_URL = f"{BASE_URL}/diccionario"

@@ -25,7 +25,7 @@ from siani.data_preparation.data_cleansing.text_curator import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
+DATA_DIR = PROJECT_ROOT / "siani/data"
 CLEANED_DATA_DIR = DATA_DIR / "cleaned_data"
 
 SOURCES = ("all",)
