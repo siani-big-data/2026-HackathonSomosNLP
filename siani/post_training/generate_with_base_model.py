@@ -4,6 +4,7 @@ import csv
 import json
 import random
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ TOP_P = 0.95
 DO_SAMPLE = True
 MAX_CORPECAN_EXAMPLES = 3
 MAX_CORPECAN_EXAMPLE_CHARS = 500
+HEARTBEAT_EVERY = 25
 
 TARGET_TYPES = (
     "type_1_knowledge",
@@ -219,9 +221,23 @@ def stream_generate_examples(
         csv_writer.writeheader()
 
         for index, record in enumerate(records, start=1):
+            if index == 1 or index % HEARTBEAT_EVERY == 0:
+                print(
+                    f"[run] procesando={index}/{len(records)} "
+                    f"source={record.source} id={record.id}"
+                )
             task_type = TARGET_TYPES[(index - 1) % len(TARGET_TYPES)]
+            started_at = time.monotonic()
             generated = generate_single_example(model, tokenizer, record, task_type, style_examples)
+            elapsed = time.monotonic() - started_at
+            if elapsed >= 30:
+                print(
+                    f"[slow] {record.id} tardó {elapsed:.1f}s "
+                    f"(source={record.source}, type={task_type})"
+                )
             if generated is None:
+                if index % HEARTBEAT_EVERY == 0:
+                    print(f"[skip] procesados={index}/{len(records)} sin salida válida")
                 continue
             role_profile = choose_role(rng)
 
