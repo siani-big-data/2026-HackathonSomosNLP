@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import random
 import re
+import subprocess
+import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import torch
 
-from siani.post_training.build_datasets import CLEANED_DATA_PATH, Record, clip_text, normalize_text, \
-    MAX_CORPUS_TEXT_CHARS
+from siani.post_training.build_datasets import CLEANED_DATA_PATH, MAX_CORPUS_TEXT_CHARS, Record, clip_text, normalize_text
 from siani.training.modeling import load_multimodal_model, load_processor, resolve_torch_dtype
 
 
@@ -30,13 +33,14 @@ DEVICE_MAP = "auto"
 RANDOM_SEED = 42
 RECORD_LIMIT: int | None = None
 MAX_SOURCE_TEXT_CHARS = 3500
-MAX_NEW_TOKENS = 900
+MAX_NEW_TOKENS = 700
 TEMPERATURE = 0.8
 TOP_P = 0.95
 DO_SAMPLE = True
-MAX_CORPECAN_EXAMPLES = 3
-MAX_CORPECAN_EXAMPLE_CHARS = 500
 HEARTBEAT_EVERY = 25
+WORKER_COUNT = 2
+WORKER_VISIBLE_DEVICES = ("0", "1")
+TARGET_SOURCES = ("canariwiki", "gevic")
 
 TARGET_TYPES = (
     "type_1_knowledge",
@@ -49,7 +53,8 @@ TARGET_TYPES = (
 GENERATOR_SYSTEM_PROMPT = (
     "Eres un generador de prompts y respuestas para post-entrenamiento cultural. "
     "Tu única tarea es crear ejemplos de alta calidad basados estrictamente en el texto dado. "
-    "No inventes países, no uses estereotipos y no conviertas la pregunta en trivia. "
+    "No inventes países, no uses estereotipos, no conviertas la pregunta en trivia y no copies la estructura de una entrada de diccionario. "
+    "Prioriza escenas, prácticas, topónimos, costumbres, memoria local, patrimonio, paisaje y usos reales de Canarias. "
     "Cuando redactes assistant_response, usa estilo canario natural cuando el contexto lo pida: "
     "registro cercano, giros locales plausibles, cadencia oral reconocible y sensibilidad insular, "
     "sin caricaturizar ni forzar canarismos donde no hagan falta. "
@@ -61,13 +66,14 @@ GENERATOR_USER_TEMPLATE = """Genera exactamente un ejemplo de dataset para el ti
 Requisitos obligatorios:
 - El ejemplo debe basarse en el texto completo dado abajo.
 - El prompt debe ser no trivial, contextualizado, abierto a la pluralidad y culturalmente situado.
-- El system_prompt debe definir un rol rico: género, edad, clase, educación, ocupación y anclaje regional.
+- Debe notarse que la fuente viene de {source} y no de un diccionario: usa detalles del lugar, del patrimonio, de la historia local o de las prácticas descritas.
 - La respuesta debe estar alineada con el texto fuente.
 - La respuesta debe poder sonar canaria de verdad, no en español neutro artificial. Puede usar giros canarios si encajan con el rol y la situación, pero sin exagerar.
 - Si el tipo es `type_3_preference_intersectional`, el prompt debe incluir opciones A/B/C/D dentro del propio texto y la respuesta debe justificar la opción elegida.
 - Si el tipo es `type_4_dynamic`, el prompt debe contener un diálogo prefabricado o una instrucción de adaptación de registro dentro del mismo prompt.
 - Si el tipo es `type_5_bias`, el prompt debe ser neutral en superficie y no mencionar explícitamente el estereotipo.
 - Todo debe referirse a Canarias y al contenido concreto del texto.
+- No uses marcadores vacíos como "(ciudad)", "(e:)" o similares.
 
 Devuelve exclusivamente un objeto JSON con estas claves:
 {{
@@ -89,26 +95,57 @@ Texto fuente:
 \"\"\"
 {text}
 \"\"\"
-
-Ejemplos de estilo canario tomados del corpus:
-{style_examples}
 """
 
 
 def main() -> None:
-    rng = random.Random(RANDOM_SEED)
+    worker_index = os.environ.get("GENERATOR_WORKER_INDEX")
+    if worker_index is not None:
+        run_worker(int(worker_index), int(os.environ["GENERATOR_WORKER_COUNT"]))
+        return
+
     records = load_records()
-    style_examples = extract_corpecan_style_examples(records)
     if RECORD_LIMIT is not None:
         records = records[:RECORD_LIMIT]
+    print(f"[plan] fuentes={', '.join(TARGET_SOURCES)} registros={len(records)} workers={WORKER_COUNT}")
+    launch_workers()
+    merge_worker_outputs(WORKER_COUNT)
+    print(f"[done] prompts={PROMPTS_OUTPUT_PATH}")
+    print(f"[done] sft={SFT_OUTPUT_PATH}")
+    print(f"[done] csv={CSV_OUTPUT_PATH}")
 
-    print(f"[1/4] Cargando processor base: {PROCESSOR_NAME_OR_PATH}")
+
+def launch_workers() -> None:
+    for worker_index in range(WORKER_COUNT):
+        device_value = WORKER_VISIBLE_DEVICES[worker_index] if worker_index < len(WORKER_VISIBLE_DEVICES) else str(worker_index)
+        env = os.environ.copy()
+        env["GENERATOR_WORKER_INDEX"] = str(worker_index)
+        env["GENERATOR_WORKER_COUNT"] = str(WORKER_COUNT)
+        env["CUDA_VISIBLE_DEVICES"] = device_value
+        print(f"[spawn] worker={worker_index} cuda_visible_devices={device_value}")
+        subprocess.run(
+            [sys.executable, "-m", "siani.post_training.generate_with_base_model"],
+            check=True,
+            cwd=str(ROOT.parent.parent),
+            env=env,
+        )
+
+
+def run_worker(worker_index: int, worker_count: int) -> None:
+    rng = random.Random(RANDOM_SEED + worker_index)
+    records = load_records()
+    if RECORD_LIMIT is not None:
+        records = records[:RECORD_LIMIT]
+    shard_records = records[worker_index::worker_count]
+
+    print(f"[worker {worker_index}] registros={len(shard_records)}")
+    print(f"[worker {worker_index}] cargando processor base: {PROCESSOR_NAME_OR_PATH}")
     processor = load_processor(PROCESSOR_NAME_OR_PATH, trust_remote_code=TRUST_REMOTE_CODE)
     tokenizer = processor.tokenizer
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"[2/4] Cargando modelo base: {MODEL_NAME_OR_PATH}")
+    print(f"[worker {worker_index}] cargando modelo base: {MODEL_NAME_OR_PATH}")
     model = load_multimodal_model(
         model_name_or_path=MODEL_NAME_OR_PATH,
         trust_remote_code=TRUST_REMOTE_CODE,
@@ -118,86 +155,67 @@ def main() -> None:
     )
     model.eval()
 
-    print(f"[3/4] Generando ejemplos a partir de {len(records)} registros...")
-    prompt_count, sft_count = stream_generate_examples(
+    stream_generate_examples(
         model=model,
         tokenizer=tokenizer,
-        records=records,
+        records=shard_records,
         rng=rng,
-        style_examples=style_examples,
+        worker_index=worker_index,
     )
-
-    print(f"[4/4] Listo. prompts={prompt_count} sft={sft_count}")
-    print(f"Prompts: {PROMPTS_OUTPUT_PATH}")
-    print(f"SFT: {SFT_OUTPUT_PATH}")
 
 
 def load_records() -> list[Record]:
     if not CLEANED_DATA_PATH.exists():
         raise FileNotFoundError(f"No encontré cleaned_data en: {CLEANED_DATA_PATH}")
-    rows: list[Record] = []
+
+    grouped: dict[str, list[Record]] = defaultdict(list)
     with CLEANED_DATA_PATH.open("r", encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
             if not line:
                 continue
             raw = json.loads(line)
+            source = str(raw.get("source", ""))
+            if source not in TARGET_SOURCES:
+                continue
             text = normalize_text(str(raw.get("text", "")))
             if not text:
                 continue
-            rows.append(
+            grouped[source].append(
                 Record(
                     id=str(raw.get("id", "")),
-                    source=str(raw.get("source", "")),
+                    source=source,
                     title=normalize_text(str(raw.get("title", ""))),
                     text=clip_text(text, MAX_SOURCE_TEXT_CHARS),
                     metadata=dict(raw.get("metadata", {}) or {}),
                 )
             )
+
+    rows = interleave_sources(grouped)
+    if not rows:
+        raise RuntimeError(
+            f"No encontré registros válidos para las fuentes pedidas: {', '.join(TARGET_SOURCES)}"
+        )
     return rows
 
 
-def generate_examples(
-    model: Any,
-    tokenizer: Any,
-    records: list[Record],
-    rng: random.Random,
-    style_examples: str,
-) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    type_cycle = list(TARGET_TYPES)
+def interleave_sources(grouped: dict[str, list[Record]]) -> list[Record]:
+    sources = [source for source in TARGET_SOURCES if grouped.get(source)]
+    for source in sources:
+        grouped[source].sort(key=lambda record: record.id)
 
-    for index, record in enumerate(records, start=1):
-        task_type = type_cycle[(index - 1) % len(type_cycle)]
-        generated = generate_single_example(model, tokenizer, record, task_type, style_examples)
-        if generated is None:
-            continue
-
-        role_profile = choose_role(rng)
-        row = {
-            "id": f"model::{record.id}::{task_type}",
-            "split": assign_split(record.id),
-            "type": generated["type"],
-            "country": generated.get("country", "España"),
-            "region": generated.get("region", "Canarias"),
-            "city": generated.get("city", infer_city(record)),
-            "source": record.source,
-            "source_id": record.id,
-            "system_prompt": build_manual_system_prompt(
-                task_type=generated["type"],
-                city=generated.get("city", infer_city(record)),
-                role_profile=role_profile,
-            ),
-            "prompt": normalize_text(str(generated["prompt"])),
-            "assistant_response": normalize_text(str(generated["assistant_response"])),
-            "model_gen": MODEL_NAME_OR_PATH,
-        }
-        rows.append(row)
-
-        if index % 25 == 0:
-            print(f"  generados={len(rows)} procesados={index}")
-
-    rng.shuffle(rows)
+    rows: list[Record] = []
+    index = 0
+    while True:
+        emitted = False
+        for source in sources:
+            source_rows = grouped[source]
+            if index < len(source_rows):
+                rows.append(source_rows[index])
+                emitted = True
+        if not emitted:
+            break
+        index += 1
     return rows
 
 
@@ -206,16 +224,19 @@ def stream_generate_examples(
     tokenizer: Any,
     records: list[Record],
     rng: random.Random,
-    style_examples: str,
+    worker_index: int,
 ) -> tuple[int, int]:
+    prompts_path = worker_prompts_path(worker_index)
+    sft_path = worker_sft_path(worker_index)
+    csv_path = worker_csv_path(worker_index)
     fieldnames = ["id", "prompt", "pais", "region", "city", "type", "system_prompt", "source", "source_id", "modelo_gen"]
     prompt_count = 0
     sft_count = 0
 
     with (
-        PROMPTS_OUTPUT_PATH.open("w", encoding="utf-8") as prompts_handle,
-        SFT_OUTPUT_PATH.open("w", encoding="utf-8") as sft_handle,
-        CSV_OUTPUT_PATH.open("w", encoding="utf-8", newline="") as csv_handle,
+        prompts_path.open("w", encoding="utf-8") as prompts_handle,
+        sft_path.open("w", encoding="utf-8") as sft_handle,
+        csv_path.open("w", encoding="utf-8", newline="") as csv_handle,
     ):
         csv_writer = csv.DictWriter(csv_handle, fieldnames=fieldnames)
         csv_writer.writeheader()
@@ -223,36 +244,37 @@ def stream_generate_examples(
         for index, record in enumerate(records, start=1):
             if index == 1 or index % HEARTBEAT_EVERY == 0:
                 print(
-                    f"[run] procesando={index}/{len(records)} "
+                    f"[worker {worker_index}] procesando={index}/{len(records)} "
                     f"source={record.source} id={record.id}"
                 )
             task_type = TARGET_TYPES[(index - 1) % len(TARGET_TYPES)]
             started_at = time.monotonic()
-            generated = generate_single_example(model, tokenizer, record, task_type, style_examples)
+            generated = generate_single_example(model, tokenizer, record, task_type)
             elapsed = time.monotonic() - started_at
             if elapsed >= 30:
                 print(
-                    f"[slow] {record.id} tardó {elapsed:.1f}s "
+                    f"[worker {worker_index}] [slow] {record.id} tardó {elapsed:.1f}s "
                     f"(source={record.source}, type={task_type})"
                 )
             if generated is None:
                 if index % HEARTBEAT_EVERY == 0:
-                    print(f"[skip] procesados={index}/{len(records)} sin salida válida")
+                    print(f"[worker {worker_index}] [skip] procesados={index}/{len(records)} sin salida válida")
                 continue
-            role_profile = choose_role(rng)
 
+            role_profile = choose_role(rng)
+            city = sanitize_city(str(generated.get("city", infer_city(record))), record)
             row = {
                 "id": f"model::{record.id}::{task_type}",
                 "split": assign_split(record.id),
                 "type": generated["type"],
                 "country": generated.get("country", "España"),
                 "region": generated.get("region", "Canarias"),
-                "city": generated.get("city", infer_city(record)),
+                "city": city,
                 "source": record.source,
                 "source_id": record.id,
                 "system_prompt": build_manual_system_prompt(
                     task_type=generated["type"],
-                    city=generated.get("city", infer_city(record)),
+                    city=city,
                     role_profile=role_profile,
                 ),
                 "prompt": normalize_text(str(generated["prompt"])),
@@ -303,12 +325,13 @@ def stream_generate_examples(
                 prompts_handle.flush()
                 sft_handle.flush()
                 csv_handle.flush()
-                print(f"[stream] prompts={prompt_count} procesados={index}/{len(records)}")
+                print(f"[worker {worker_index}] [stream] prompts={prompt_count} procesados={index}/{len(records)}")
 
         prompts_handle.flush()
         sft_handle.flush()
         csv_handle.flush()
 
+    print(f"[worker {worker_index}] terminado prompts={prompt_count} sft={sft_count}")
     return prompt_count, sft_count
 
 
@@ -317,7 +340,6 @@ def generate_single_example(
     tokenizer: Any,
     record: Record,
     task_type: str,
-    style_examples: str,
 ) -> dict[str, str] | None:
     prompt = GENERATOR_USER_TEMPLATE.format(
         task_type=task_type,
@@ -326,7 +348,6 @@ def generate_single_example(
         title=record.title or record.id,
         metadata=json.dumps(record.metadata, ensure_ascii=False),
         text=record.text,
-        style_examples=style_examples,
     )
     rendered_prompt = render_messages(tokenizer, GENERATOR_SYSTEM_PROMPT, prompt)
     encoded = tokenizer(
@@ -397,43 +418,42 @@ def extract_json_object(text: str) -> dict[str, str] | None:
     return {str(key): str(value) if not isinstance(value, str) else value for key, value in parsed.items()}
 
 
-def to_sft_rows(prompt_rows: list[dict[str, object]]) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for row in prompt_rows:
-        rows.append(
-            {
-                "id": row["id"],
-                "messages": [
-                    {"role": "system", "content": str(row["system_prompt"])},
-                    {"role": "user", "content": str(row["prompt"])},
-                    {"role": "assistant", "content": str(row["assistant_response"])},
-                ],
-                "metadata": {
-                    "split": row["split"],
-                    "type": row["type"],
-                    "country": row["country"],
-                    "region": row["region"],
-                    "city": row["city"],
-                    "source": row["source"],
-                    "source_id": row["source_id"],
-                    "model_gen": row["model_gen"],
-                },
-            }
-        )
-    return rows
-
-
 def infer_city(record: Record) -> str:
-    lowered = f"{record.title} {record.text[:250]}".lower()
-    if "tenerife" in lowered or "laguna" in lowered:
+    lowered = f"{record.title} {record.text[:500]}".lower()
+    metadata_text = json.dumps(record.metadata, ensure_ascii=False).lower()
+    joined = lowered + " " + metadata_text
+    if "la laguna" in joined or "san cristóbal de la laguna" in joined:
         return "San Cristóbal de La Laguna"
-    if "lanzarote" in lowered:
+    if "santa cruz de tenerife" in joined:
+        return "Santa Cruz de Tenerife"
+    if "tenerife" in joined:
+        return "San Cristóbal de La Laguna"
+    if "arrecife" in joined or "lanzarote" in joined:
         return "Arrecife"
-    if "fuerteventura" in lowered:
+    if "puerto del rosario" in joined or "fuerteventura" in joined:
         return "Puerto del Rosario"
-    if "la palma" in lowered:
+    if "la palma" in joined or "santa cruz de la palma" in joined:
         return "Santa Cruz de La Palma"
+    if "la gomera" in joined or "san sebastián de la gomera" in joined:
+        return "San Sebastián de La Gomera"
+    if "el hierro" in joined or "valverde" in joined:
+        return "Valverde"
+    if "gran canaria" in joined or "las palmas de gran canaria" in joined:
+        return "Las Palmas de Gran Canaria"
     return "Las Palmas de Gran Canaria"
+
+
+def sanitize_city(city: str, record: Record) -> str:
+    cleaned = normalize_text(city)
+    if not cleaned:
+        return infer_city(record)
+    lowered = cleaned.lower()
+    invalid_markers = ("(ciudad", "(e:", "varía", "varia", "desconocida", "unknown", "n/a")
+    if any(marker in lowered for marker in invalid_markers):
+        return infer_city(record)
+    if cleaned.startswith("(") and cleaned.endswith(")"):
+        return infer_city(record)
+    return cleaned
 
 
 def choose_role(rng: random.Random) -> dict[str, str]:
@@ -507,27 +527,6 @@ def build_manual_system_prompt(task_type: str, city: str, role_profile: dict[str
     return base + task_instructions.get(task_type, "Responde con matiz local, claridad y naturalidad.")
 
 
-def extract_corpecan_style_examples(records: list[Record]) -> str:
-    examples = [record for record in records if record.source == "corpecan" and record.text.strip()]
-    if not examples:
-        return "- No hay ejemplos corpecan disponibles."
-
-    selected = examples[:MAX_CORPECAN_EXAMPLES]
-    rendered = []
-    for index, record in enumerate(selected, start=1):
-        text = first_sentences(record.text, 4)
-        text = clip_text(text, MAX_CORPECAN_EXAMPLE_CHARS)
-        title = record.title or record.id
-        rendered.append(f"- Ejemplo {index} ({title}): {text}")
-    return "\n".join(rendered)
-
-
-def first_sentences(text: str, count: int) -> str:
-    parts = re.split(r"(?<=[.!?])\s+", normalize_text(text))
-    parts = [part for part in parts if part]
-    return " ".join(parts[:count]).strip() or clip_text(text, MAX_CORPUS_TEXT_CHARS)
-
-
 def assign_split(value: str) -> str:
     number = sum(ord(char) for char in value) % 100
     if number < 90:
@@ -537,66 +536,46 @@ def assign_split(value: str) -> str:
     return "test"
 
 
-def write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
-    with path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+def worker_prompts_path(worker_index: int) -> Path:
+    return ROOT / f"generated.canary.model_based.prompts.worker{worker_index}.jsonl"
 
 
-def write_prompt_csv(path: Path, rows: list[dict[str, object]]) -> None:
+def worker_sft_path(worker_index: int) -> Path:
+    return ROOT / f"generated.canary.model_based.sft.worker{worker_index}.jsonl"
+
+
+def worker_csv_path(worker_index: int) -> Path:
+    return ROOT / f"generated.canary.model_based.prompts.worker{worker_index}.csv"
+
+
+def merge_worker_outputs(worker_count: int) -> None:
+    merge_jsonl_files([worker_prompts_path(index) for index in range(worker_count)], PROMPTS_OUTPUT_PATH)
+    merge_jsonl_files([worker_sft_path(index) for index in range(worker_count)], SFT_OUTPUT_PATH)
+    merge_csv_files([worker_csv_path(index) for index in range(worker_count)], CSV_OUTPUT_PATH)
+
+
+def merge_jsonl_files(source_paths: list[Path], destination_path: Path) -> None:
+    with destination_path.open("w", encoding="utf-8") as destination:
+        for path in source_paths:
+            if not path.exists():
+                continue
+            with path.open("r", encoding="utf-8") as source:
+                for line in source:
+                    destination.write(line)
+
+
+def merge_csv_files(source_paths: list[Path], destination_path: Path) -> None:
     fieldnames = ["id", "prompt", "pais", "region", "city", "type", "system_prompt", "source", "source_id", "modelo_gen"]
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+    with destination_path.open("w", encoding="utf-8", newline="") as destination:
+        writer = csv.DictWriter(destination, fieldnames=fieldnames)
         writer.writeheader()
-        for row in rows:
-            writer.writerow(
-                {
-                    "id": row["id"],
-                    "prompt": row["prompt"],
-                    "pais": row["country"],
-                    "region": row["region"],
-                    "city": row["city"],
-                    "type": row["type"],
-                    "system_prompt": row["system_prompt"],
-                    "source": row["source"],
-                    "source_id": row["source_id"],
-                    "modelo_gen": row["model_gen"],
-                }
-            )
-
-
-def stream_write_jsonl(path: Path, rows: list[dict[str, object]], label: str) -> None:
-    with path.open("w", encoding="utf-8") as handle:
-        for index, row in enumerate(rows, start=1):
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-            if index % 25 == 0 or index == len(rows):
-                handle.flush()
-                print(f"[write:{label}] {index}/{len(rows)}")
-
-
-def stream_write_prompt_csv(path: Path, rows: list[dict[str, object]]) -> None:
-    fieldnames = ["id", "prompt", "pais", "region", "city", "type", "system_prompt", "source", "source_id", "modelo_gen"]
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for index, row in enumerate(rows, start=1):
-            writer.writerow(
-                {
-                    "id": row["id"],
-                    "prompt": row["prompt"],
-                    "pais": row["country"],
-                    "region": row["region"],
-                    "city": row["city"],
-                    "type": row["type"],
-                    "system_prompt": row["system_prompt"],
-                    "source": row["source"],
-                    "source_id": row["source_id"],
-                    "modelo_gen": row["model_gen"],
-                }
-            )
-            if index % 25 == 0 or index == len(rows):
-                handle.flush()
-                print(f"[write:model_csv] {index}/{len(rows)}")
+        for path in source_paths:
+            if not path.exists():
+                continue
+            with path.open("r", encoding="utf-8", newline="") as source:
+                reader = csv.DictReader(source)
+                for row in reader:
+                    writer.writerow(row)
 
 
 if __name__ == "__main__":
