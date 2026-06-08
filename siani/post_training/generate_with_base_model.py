@@ -39,7 +39,7 @@ TOP_P = 0.95
 DO_SAMPLE = True
 HEARTBEAT_EVERY = 25
 WORKER_COUNT = 2
-WORKER_VISIBLE_DEVICES = ("0", "1")
+WORKER_VISIBLE_DEVICES = ("0", "0")
 TARGET_SOURCES = ("canariwiki", "gevic")
 
 TARGET_TYPES = (
@@ -116,6 +116,7 @@ def main() -> None:
 
 
 def launch_workers() -> None:
+    processes: list[tuple[int, subprocess.Popen[str]]] = []
     for worker_index in range(WORKER_COUNT):
         device_value = WORKER_VISIBLE_DEVICES[worker_index] if worker_index < len(WORKER_VISIBLE_DEVICES) else str(worker_index)
         env = os.environ.copy()
@@ -123,12 +124,23 @@ def launch_workers() -> None:
         env["GENERATOR_WORKER_COUNT"] = str(WORKER_COUNT)
         env["CUDA_VISIBLE_DEVICES"] = device_value
         print(f"[spawn] worker={worker_index} cuda_visible_devices={device_value}")
-        subprocess.run(
+        process = subprocess.Popen(
             [sys.executable, "-m", "siani.post_training.generate_with_base_model"],
-            check=True,
             cwd=str(ROOT.parent.parent),
             env=env,
+            text=True,
         )
+        processes.append((worker_index, process))
+
+    failed_workers: list[int] = []
+    for worker_index, process in processes:
+        return_code = process.wait()
+        if return_code != 0:
+            failed_workers.append(worker_index)
+
+    if failed_workers:
+        joined = ", ".join(str(worker_index) for worker_index in failed_workers)
+        raise RuntimeError(f"Fallaron los workers: {joined}")
 
 
 def run_worker(worker_index: int, worker_count: int) -> None:
@@ -247,79 +259,82 @@ def stream_generate_examples(
                     f"[worker {worker_index}] procesando={index}/{len(records)} "
                     f"source={record.source} id={record.id}"
                 )
-            task_type = TARGET_TYPES[(index - 1) % len(TARGET_TYPES)]
-            started_at = time.monotonic()
-            generated = generate_single_example(model, tokenizer, record, task_type)
-            elapsed = time.monotonic() - started_at
-            if elapsed >= 30:
-                print(
-                    f"[worker {worker_index}] [slow] {record.id} tardó {elapsed:.1f}s "
-                    f"(source={record.source}, type={task_type})"
-                )
-            if generated is None:
-                if index % HEARTBEAT_EVERY == 0:
-                    print(f"[worker {worker_index}] [skip] procesados={index}/{len(records)} sin salida válida")
-                continue
+            generated_for_record = 0
+            for task_type in TARGET_TYPES:
+                started_at = time.monotonic()
+                generated = generate_single_example(model, tokenizer, record, task_type)
+                elapsed = time.monotonic() - started_at
+                if elapsed >= 30:
+                    print(
+                        f"[worker {worker_index}] [slow] {record.id} tardó {elapsed:.1f}s "
+                        f"(source={record.source}, type={task_type})"
+                    )
+                if generated is None:
+                    continue
 
-            role_profile = choose_role(rng)
-            city = sanitize_city(str(generated.get("city", infer_city(record))), record)
-            row = {
-                "id": f"model::{record.id}::{task_type}",
-                "split": assign_split(record.id),
-                "type": generated["type"],
-                "country": generated.get("country", "España"),
-                "region": generated.get("region", "Canarias"),
-                "city": city,
-                "source": record.source,
-                "source_id": record.id,
-                "system_prompt": build_manual_system_prompt(
-                    task_type=generated["type"],
-                    city=city,
-                    role_profile=role_profile,
-                ),
-                "prompt": normalize_text(str(generated["prompt"])),
-                "assistant_response": normalize_text(str(generated["assistant_response"])),
-                "model_gen": MODEL_NAME_OR_PATH,
-            }
-
-            sft_row = {
-                "id": row["id"],
-                "messages": [
-                    {"role": "system", "content": row["system_prompt"]},
-                    {"role": "user", "content": row["prompt"]},
-                    {"role": "assistant", "content": row["assistant_response"]},
-                ],
-                "metadata": {
-                    "split": row["split"],
-                    "type": row["type"],
-                    "country": row["country"],
-                    "region": row["region"],
-                    "city": row["city"],
-                    "source": row["source"],
-                    "source_id": row["source_id"],
-                    "model_gen": row["model_gen"],
-                },
-            }
-
-            prompts_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-            sft_handle.write(json.dumps(sft_row, ensure_ascii=False) + "\n")
-            csv_writer.writerow(
-                {
-                    "id": row["id"],
-                    "prompt": row["prompt"],
-                    "pais": row["country"],
-                    "region": row["region"],
-                    "city": row["city"],
-                    "type": row["type"],
-                    "system_prompt": row["system_prompt"],
-                    "source": row["source"],
-                    "source_id": row["source_id"],
-                    "modelo_gen": row["model_gen"],
+                role_profile = choose_role(rng)
+                city = sanitize_city(str(generated.get("city", infer_city(record))), record)
+                row = {
+                    "id": f"model::{record.id}::{task_type}",
+                    "split": assign_split(f"{record.id}::{task_type}"),
+                    "type": generated["type"],
+                    "country": generated.get("country", "España"),
+                    "region": generated.get("region", "Canarias"),
+                    "city": city,
+                    "source": record.source,
+                    "source_id": record.id,
+                    "system_prompt": build_manual_system_prompt(
+                        task_type=generated["type"],
+                        city=city,
+                        role_profile=role_profile,
+                    ),
+                    "prompt": normalize_text(str(generated["prompt"])),
+                    "assistant_response": normalize_text(str(generated["assistant_response"])),
+                    "model_gen": MODEL_NAME_OR_PATH,
                 }
-            )
 
-            prompt_count += 1
-            sft_count += 1
+                sft_row = {
+                    "id": row["id"],
+                    "messages": [
+                        {"role": "system", "content": row["system_prompt"]},
+                        {"role": "user", "content": row["prompt"]},
+                        {"role": "assistant", "content": row["assistant_response"]},
+                    ],
+                    "metadata": {
+                        "split": row["split"],
+                        "type": row["type"],
+                        "country": row["country"],
+                        "region": row["region"],
+                        "city": row["city"],
+                        "source": row["source"],
+                        "source_id": row["source_id"],
+                        "model_gen": row["model_gen"],
+                    },
+                }
+
+                prompts_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+                sft_handle.write(json.dumps(sft_row, ensure_ascii=False) + "\n")
+                csv_writer.writerow(
+                    {
+                        "id": row["id"],
+                        "prompt": row["prompt"],
+                        "pais": row["country"],
+                        "region": row["region"],
+                        "city": row["city"],
+                        "type": row["type"],
+                        "system_prompt": row["system_prompt"],
+                        "source": row["source"],
+                        "source_id": row["source_id"],
+                        "modelo_gen": row["model_gen"],
+                    }
+                )
+
+                prompt_count += 1
+                sft_count += 1
+                generated_for_record += 1
+
+            if generated_for_record == 0 and index % HEARTBEAT_EVERY == 0:
+                print(f"[worker {worker_index}] [skip] procesados={index}/{len(records)} sin salidas válidas")
 
             if prompt_count % 10 == 0:
                 prompts_handle.flush()
