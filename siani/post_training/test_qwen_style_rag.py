@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -144,8 +145,9 @@ def build_or_refresh_index(knowledge_dirs: list[Path]) -> sqlite3.Connection:
             if not file_path.is_file():
                 continue
             for item in load_documents_from_file(file_path, source):
+                file_key = stable_file_key(file_path)
                 for chunk_index, chunk_text in enumerate(chunk_texts(item["text"]), start=1):
-                    chunk_id = f"{source}:{item['doc_id']}:{chunk_index}"
+                    chunk_id = f"{source}:{file_key}:{item['doc_id']}:{chunk_index}"
                     conn.execute(
                         "INSERT INTO chunks (chunk_id, source, title, text, path) VALUES (?, ?, ?, ?, ?)",
                         (chunk_id, source, item["title"], chunk_text, str(file_path)),
@@ -327,6 +329,11 @@ def fts_query(text: str) -> str:
     if not tokens:
         return "canarias"
     return " OR ".join(tokens[:8])
+
+
+def stable_file_key(file_path: Path) -> str:
+    digest = hashlib.sha1(str(file_path).encode("utf-8")).hexdigest()
+    return digest[:12]
 
 
 def generate_text(model, tokenizer, prompt: str, retrieved: list[dict[str, str]]) -> str:
