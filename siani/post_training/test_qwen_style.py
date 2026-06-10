@@ -5,19 +5,15 @@ from pathlib import Path
 
 import torch
 from peft import PeftModel
-
-from siani.training.data import repo_root_from_file
-from siani.training.modeling import load_multimodal_model, load_processor, resolve_torch_dtype
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-REPO_ROOT = repo_root_from_file(Path(__file__))
-CHECKPOINT_DIR = REPO_ROOT / "outputs" / "qwen2vl_canarias_sft_from_continual"
-DEFAULT_BASE_MODEL = "Qwen/Qwen2-VL-7B-Instruct"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHECKPOINT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_style_lora"
+DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 TORCH_DTYPE = "bfloat16"
-ATTN_IMPLEMENTATION = "sdpa"
-TRUST_REMOTE_CODE = True
 MAX_NEW_TOKENS = 256
-TEMPERATURE = 0.7
+TEMPERATURE = 0.8
 TOP_P = 0.9
 DO_SAMPLE = True
 
@@ -25,33 +21,26 @@ DO_SAMPLE = True
 def main() -> None:
     checkpoint_dir = CHECKPOINT_DIR.resolve()
     if not checkpoint_dir.exists():
-        raise FileNotFoundError(f"No encontré el checkpoint SFT en: {checkpoint_dir}")
+        raise FileNotFoundError(f"No encontré el checkpoint en: {checkpoint_dir}")
 
     print(f"[1/4] Resolviendo checkpoint: {checkpoint_dir}")
     base_model_name = resolve_base_model_name(checkpoint_dir)
-    processor_source = checkpoint_dir if has_processor_files(checkpoint_dir) else Path(base_model_name)
 
-    print(f"[2/4] Cargando processor desde: {processor_source}")
-    processor = load_processor(str(processor_source), trust_remote_code=TRUST_REMOTE_CODE)
+    print(f"[2/4] Cargando tokenizer desde: {checkpoint_dir}")
+    tokenizer = AutoTokenizer.from_pretrained(str(checkpoint_dir), use_fast=True)
+    if tokenizer.pad_token is None and tokenizer.eos_token is not None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     print(f"[3/4] Cargando modelo base: {base_model_name}")
-    model = load_multimodal_model(
-        model_name_or_path=base_model_name,
-        trust_remote_code=TRUST_REMOTE_CODE,
-        torch_dtype=resolve_torch_dtype(TORCH_DTYPE),
-        attn_implementation=ATTN_IMPLEMENTATION,
+    model = AutoModelForCausalLM.from_pretrained(
+        base_model_name,
+        dtype=resolve_torch_dtype(TORCH_DTYPE),
         device_map="auto",
     )
 
     if is_lora_checkpoint(checkpoint_dir):
         print(f"       Aplicando adaptador LoRA desde: {checkpoint_dir}")
         model = PeftModel.from_pretrained(model, str(checkpoint_dir))
-
-    tokenizer = getattr(processor, "tokenizer", None)
-    if tokenizer is None:
-        raise RuntimeError("El processor cargado no expone tokenizer.")
-    if tokenizer.pad_token is None and tokenizer.eos_token is not None:
-        tokenizer.pad_token = tokenizer.eos_token
 
     model.eval()
     print("[4/4] Listo. Escribe un prompt. Sal con 'exit' o 'quit'.")
@@ -74,7 +63,6 @@ def main() -> None:
 
 
 def generate_text(model, tokenizer, prompt: str) -> str:
-    device = model.device
     messages = [{"role": "user", "content": prompt}]
     if hasattr(tokenizer, "apply_chat_template"):
         rendered_prompt = tokenizer.apply_chat_template(
@@ -91,7 +79,7 @@ def generate_text(model, tokenizer, prompt: str) -> str:
         truncation=True,
         max_length=2048,
     )
-    encoded = {key: value.to(device) for key, value in encoded.items()}
+    encoded = move_to_model_device(encoded, model)
 
     with torch.inference_mode():
         generated = model.generate(
@@ -110,33 +98,43 @@ def generate_text(model, tokenizer, prompt: str) -> str:
     return tokenizer.decode(completion_ids, skip_special_tokens=True).strip()
 
 
+def move_to_model_device(encoded: dict[str, torch.Tensor], model) -> dict[str, torch.Tensor]:
+    try:
+        device = model.device
+        return {key: value.to(device) for key, value in encoded.items()}
+    except Exception:
+        return encoded
+
+
 def resolve_base_model_name(checkpoint_dir: Path) -> str:
     run_config_path = checkpoint_dir / "run_config.json"
     if run_config_path.exists():
         payload = json.loads(run_config_path.read_text(encoding="utf-8"))
-        model_name = payload.get("base_model_name_or_path") or payload.get("model_name_or_path")
+        model_name = payload.get("model_name_or_path")
         if model_name:
             return str(model_name)
-
     adapter_config_path = checkpoint_dir / "adapter_config.json"
     if adapter_config_path.exists():
         payload = json.loads(adapter_config_path.read_text(encoding="utf-8"))
-        base_model_name = payload.get("base_model_name_or_path")
-        if base_model_name:
-            return str(base_model_name)
-
+        model_name = payload.get("base_model_name_or_path")
+        if model_name:
+            return str(model_name)
     return DEFAULT_BASE_MODEL
-
-
-def has_processor_files(checkpoint_dir: Path) -> bool:
-    return any(
-        (checkpoint_dir / filename).exists()
-        for filename in ("processor_config.json", "preprocessor_config.json", "tokenizer_config.json", "tokenizer.json")
-    )
 
 
 def is_lora_checkpoint(checkpoint_dir: Path) -> bool:
     return (checkpoint_dir / "adapter_config.json").exists()
+
+
+def resolve_torch_dtype(value: str | None) -> torch.dtype | None:
+    if value is None or value == "auto":
+        return None
+    mapping = {
+        "float32": torch.float32,
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+    }
+    return mapping[value]
 
 
 if __name__ == "__main__":
