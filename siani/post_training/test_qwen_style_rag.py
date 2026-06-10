@@ -22,6 +22,11 @@ KNOWLEDGE_DIR_CANDIDATES = (
 )
 TARGET_SOURCES = ("academia_canaria", "canariwiki", "gevic")
 RAG_DB_PATH = REPO_ROOT / "outputs" / "qwen_style_rag.sqlite3"
+STYLE_DATASET_CANDIDATES = (
+    REPO_ROOT / "data" / "post" / "canary_style.jsonl",
+    REPO_ROOT / "siani" / "data" / "post" / "canary_style.jsonl",
+    Path("/Users/josejuan/Desktop/canary_style.jsonl"),
+)
 
 TORCH_DTYPE = "bfloat16"
 MAX_NEW_TOKENS = 384
@@ -31,12 +36,16 @@ DO_SAMPLE = True
 TOP_K = 5
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 200
+MAX_CONTEXT_CHARS = 1800
+MAX_STYLE_EXAMPLES = 2
 
 DEFAULT_SYSTEM_PROMPT = (
     "Eres un asistente virtual de Canarias. "
     "Respondes usando el léxico, la sintaxis y las expresiones típicas del habla canaria. "
     "Cuando haya contexto recuperado de la base de conocimiento, úsalo como fuente principal, "
-    "sin inventarte datos que contradigan ese contexto."
+    "sin inventarte datos que contradigan ese contexto. "
+    "El contexto recuperado solo aporta hechos y referencias; no debes copiar su registro si suena enciclopédico o neutro. "
+    "Mantén siempre una salida natural, clara y reconociblemente canaria."
 )
 
 
@@ -49,6 +58,7 @@ def main() -> None:
     if not knowledge_dirs:
         rendered = "\n".join(str(path) for path in KNOWLEDGE_DIR_CANDIDATES)
         raise FileNotFoundError(f"No encontré carpetas de conocimiento. Miré en:\n{rendered}")
+    style_examples = load_style_examples()
 
     print(f"[1/5] Construyendo o abriendo índice RAG: {RAG_DB_PATH}")
     conn = build_or_refresh_index(knowledge_dirs)
@@ -86,17 +96,23 @@ def main() -> None:
         if prompt.lower() in {"exit", "quit"}:
             break
 
-        retrieved = search_chunks(conn, prompt, TOP_K)
-        print("\nContexto recuperado:\n")
-        if not retrieved:
-            print("(sin resultados)")
+        use_rag = should_use_rag(prompt)
+        retrieved: list[dict[str, str]] = []
+        if use_rag:
+            retrieved = search_chunks(conn, prompt, TOP_K)
+            print("\nContexto recuperado:\n")
+            if not retrieved:
+                print("(sin resultados)")
+            else:
+                for index, item in enumerate(retrieved, start=1):
+                    print(f"[{index}] {item['source']} :: {item['title']}")
+                    print(item["text"][:280].strip())
+                    print()
         else:
-            for index, item in enumerate(retrieved, start=1):
-                print(f"[{index}] {item['source']} :: {item['title']}")
-                print(item["text"][:280].strip())
-                print()
+            print("\nContexto recuperado:\n")
+            print("(RAG desactivado para este prompt)")
 
-        output = generate_text(model, tokenizer, prompt, retrieved)
+        output = generate_text(model, tokenizer, prompt, retrieved, style_examples)
         print("\nSalida:\n")
         print(output)
 
@@ -336,19 +352,34 @@ def stable_file_key(file_path: Path) -> str:
     return digest[:12]
 
 
-def generate_text(model, tokenizer, prompt: str, retrieved: list[dict[str, str]]) -> str:
+def generate_text(
+    model,
+    tokenizer,
+    prompt: str,
+    retrieved: list[dict[str, str]],
+    style_examples: list[str],
+) -> str:
     context_blocks = []
+    context_budget = 0
     for index, item in enumerate(retrieved, start=1):
-        context_blocks.append(
-            f"[{index}] fuente={item['source']} titulo={item['title']}\n{item['text']}"
-        )
+        block = f"[{index}] fuente={item['source']} titulo={item['title']}\n{item['text']}"
+        if context_budget + len(block) > MAX_CONTEXT_CHARS:
+            break
+        context_blocks.append(block)
+        context_budget += len(block)
     context = "\n\n".join(context_blocks) if context_blocks else "No se recuperó contexto."
+    style_block = "\n\n".join(f"- {example}" for example in style_examples) if style_examples else "- Sin ejemplos adicionales."
 
     user_prompt = (
         f"Pregunta del usuario:\n{prompt}\n\n"
+        f"Mini ejemplos de estilo canario que debes conservar:\n{style_block}\n\n"
         f"Contexto recuperado:\n{context}\n\n"
-        "Responde usando primero el contexto recuperado si es relevante. "
-        "Si el contexto no basta, dilo con naturalidad y no inventes datos concretos."
+        "Instrucciones:\n"
+        "- Usa el contexto recuperado solo para hechos, nombres, definiciones, lugares o matices documentales.\n"
+        "- No copies el tono enciclopédico del contexto.\n"
+        "- Mantén siempre una respuesta con sabor canario natural.\n"
+        "- Si el contexto no basta, dilo con naturalidad y no inventes datos concretos.\n"
+        "- Si la pregunta no necesita conocimiento externo, responde con tu estilo normal y listo."
     )
     messages = [
         {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
@@ -429,6 +460,96 @@ def resolve_torch_dtype(value: str | None) -> torch.dtype | None:
 
 def normalize_text(text: str) -> str:
     return " ".join(text.replace("\u00a0", " ").split())
+
+
+def load_style_examples() -> list[str]:
+    for path in STYLE_DATASET_CANDIDATES:
+        if not path.exists():
+            continue
+        examples: list[str] = []
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    raw = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                messages = raw.get("messages")
+                if not isinstance(messages, list):
+                    continue
+                assistant_messages = [
+                    normalize_text(str(message.get("content", "")))
+                    for message in messages
+                    if isinstance(message, dict) and message.get("role") == "assistant"
+                ]
+                for content in assistant_messages:
+                    if content:
+                        examples.append(content[:220])
+                        if len(examples) >= MAX_STYLE_EXAMPLES:
+                            return examples
+        if examples:
+            return examples
+    return []
+
+
+def should_use_rag(prompt: str) -> bool:
+    normalized = normalize_text(prompt).lower()
+    if not normalized:
+        return False
+
+    # Charla, opinión o prompts creativos: mejor sin RAG.
+    skip_markers = (
+        "háblame de",
+        "cuéntame",
+        "imagina",
+        "escribe",
+        "redacta",
+        "inventa",
+        "dime algo",
+        "salúdame",
+        "hazme un",
+        "opina",
+        "qué te parece",
+        "tu comida favorita",
+        "tu película favorita",
+        "cómo sería",
+    )
+    if any(marker in normalized for marker in skip_markers):
+        return False
+
+    factual_markers = (
+        "qué significa",
+        "que significa",
+        "qué es",
+        "que es",
+        "quién es",
+        "quien es",
+        "dónde",
+        "donde",
+        "cuándo",
+        "cuando",
+        "origen",
+        "topónimo",
+        "toponimo",
+        "definición",
+        "definicion",
+        "etimología",
+        "etimologia",
+        "academia canaria",
+        "canariwiki",
+        "gevic",
+        "patrimonio",
+        "consulta",
+    )
+    if "?" in normalized and any(marker in normalized for marker in factual_markers):
+        return True
+    if any(normalized.startswith(prefix) for prefix in ("qué", "que", "quién", "quien", "dónde", "donde", "cuándo", "cuando")):
+        return True
+    if any(marker in normalized for marker in factual_markers):
+        return True
+    return False
 
 
 if __name__ == "__main__":
