@@ -16,6 +16,10 @@ MAX_NEW_TOKENS = 256
 TEMPERATURE = 0.8
 TOP_P = 0.9
 DO_SAMPLE = True
+DEFAULT_SYSTEM_PROMPT = (
+    "Eres un asistente virtual de Canarias. "
+    "Respondes usando el léxico, la sintaxis y las expresiones típicas del habla canaria."
+)
 
 
 def main() -> None:
@@ -63,7 +67,10 @@ def main() -> None:
 
 
 def generate_text(model, tokenizer, prompt: str) -> str:
-    messages = [{"role": "user", "content": prompt}]
+    messages = [
+        {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
     if hasattr(tokenizer, "apply_chat_template"):
         rendered_prompt = tokenizer.apply_chat_template(
             messages,

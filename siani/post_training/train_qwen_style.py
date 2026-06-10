@@ -13,6 +13,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingA
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+DATASET_DIR_CANDIDATES = (
+    REPO_ROOT / "data" / "post",
+    REPO_ROOT / "siani" / "data" / "post",
+)
 DATASET_CANDIDATES = (
     REPO_ROOT / "siani" / "post_training" / "message.jsonl",
     REPO_ROOT / "siani" / "post_training" / "message.txt",
@@ -85,8 +89,10 @@ def main() -> None:
     print("[1/6] Inicializando entrenamiento de estilo...")
     set_seed(SEED)
 
-    dataset_path = resolve_dataset_path()
-    print(f"[2/6] Dataset: {dataset_path}")
+    dataset_paths = resolve_dataset_paths()
+    print("[2/6] Datasets:")
+    for dataset_path in dataset_paths:
+        print(f"       - {dataset_path}")
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_OR_PATH, use_fast=True)
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
@@ -103,8 +109,8 @@ def main() -> None:
     model = wrap_with_lora(model)
     prepare_model_for_training(model)
 
-    print(f"[4/6] Leyendo conversaciones: {dataset_path}")
-    train_dataset, eval_dataset = load_datasets(dataset_path)
+    print("[4/6] Leyendo conversaciones...")
+    train_dataset, eval_dataset = load_datasets(dataset_paths)
     print(f"       train={len(train_dataset)} eval={len(eval_dataset)}")
 
     training_args = TrainingArguments(
@@ -145,7 +151,7 @@ def main() -> None:
         processing_class=tokenizer,
     )
 
-    write_run_config(dataset_path, len(train_dataset), len(eval_dataset))
+    write_run_config(dataset_paths, len(train_dataset), len(eval_dataset))
     print("[6/6] Empezando train()...")
     trainer.train()
     trainer.save_model()
@@ -153,35 +159,64 @@ def main() -> None:
     print(f"Entrenamiento terminado. Modelo guardado en: {OUTPUT_DIR}")
 
 
-def resolve_dataset_path() -> Path:
+def resolve_dataset_paths() -> list[Path]:
+    directory_paths: list[Path] = []
+    for directory in DATASET_DIR_CANDIDATES:
+        if directory.exists() and directory.is_dir():
+            directory_paths.extend(sorted(path.resolve() for path in directory.glob("*.jsonl")))
+    if directory_paths:
+        return deduplicate_paths(directory_paths)
+
     for candidate in DATASET_CANDIDATES:
         if candidate.exists():
-            return candidate.resolve()
-    rendered = "\n".join(f"- {path}" for path in DATASET_CANDIDATES)
-    raise FileNotFoundError(f"No encontré el dataset de estilo. Miré en:\n{rendered}")
+            return [candidate.resolve()]
+    rendered_dirs = "\n".join(f"- {path}" for path in DATASET_DIR_CANDIDATES)
+    rendered_files = "\n".join(f"- {path}" for path in DATASET_CANDIDATES)
+    raise FileNotFoundError(
+        "No encontré datasets de estilo.\n"
+        f"Directorios mirados:\n{rendered_dirs}\n"
+        f"Ficheros mirados:\n{rendered_files}"
+    )
 
 
-def load_datasets(path: Path) -> tuple[MessageDataset, MessageDataset]:
+def deduplicate_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def load_datasets(paths: list[Path]) -> tuple[MessageDataset, MessageDataset]:
     train_rows: list[MessageExample] = []
     eval_rows: list[MessageExample] = []
+    seen_ids: set[str] = set()
 
-    with path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            raw = json.loads(line)
-            messages = list(raw.get("messages", []))
-            if not is_valid_messages(messages):
-                continue
-            example_id = str(raw.get("id", f"message:{line_number}"))
-            split = raw.get("metadata", {}).get("split") if isinstance(raw.get("metadata"), dict) else None
-            split = split or assign_split(example_id)
-            example = MessageExample(example_id=example_id, messages=messages, split=split)
-            if split == "train":
-                train_rows.append(example)
-            elif split == "validation":
-                eval_rows.append(example)
+    for path in paths:
+        with path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                raw = json.loads(line)
+                messages = list(raw.get("messages", []))
+                if not is_valid_messages(messages):
+                    continue
+                example_id = str(raw.get("id", f"{path.stem}:{line_number}"))
+                if example_id in seen_ids:
+                    continue
+                seen_ids.add(example_id)
+                split = raw.get("metadata", {}).get("split") if isinstance(raw.get("metadata"), dict) else None
+                split = split or assign_split(example_id)
+                example = MessageExample(example_id=example_id, messages=messages, split=split)
+                if split == "train":
+                    train_rows.append(example)
+                elif split == "validation":
+                    eval_rows.append(example)
 
     return MessageDataset(train_rows), MessageDataset(eval_rows)
 
@@ -246,11 +281,11 @@ def prepare_model_for_training(model: Any) -> None:
         model.enable_input_require_grads()
 
 
-def write_run_config(dataset_path: Path, train_size: int, eval_size: int) -> None:
+def write_run_config(dataset_paths: list[Path], train_size: int, eval_size: int) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
         "model_name_or_path": MODEL_NAME_OR_PATH,
-        "dataset_path": str(dataset_path),
+        "dataset_paths": [str(path) for path in dataset_paths],
         "output_dir": str(OUTPUT_DIR),
         "max_length": MAX_LENGTH,
         "learning_rate": LEARNING_RATE,
