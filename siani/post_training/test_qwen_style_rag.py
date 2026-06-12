@@ -33,6 +33,8 @@ MAX_NEW_TOKENS = 384
 TEMPERATURE = 0.7
 TOP_P = 0.9
 DO_SAMPLE = True
+REPETITION_PENALTY = 1.15
+NO_REPEAT_NGRAM_SIZE = 4
 TOP_K = 5
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 200
@@ -45,7 +47,10 @@ DEFAULT_SYSTEM_PROMPT = (
     "Cuando haya contexto recuperado de la base de conocimiento, úsalo como fuente principal, "
     "sin inventarte datos que contradigan ese contexto. "
     "El contexto recuperado solo aporta hechos y referencias; no debes copiar su registro si suena enciclopédico o neutro. "
-    "Mantén siempre una salida natural, clara y reconociblemente canaria."
+    "Mantén siempre una salida natural, clara y reconociblemente canaria. "
+    "Responde solo a la intención concreta del último mensaje del usuario. "
+    "No recicles ejemplos de entrenamiento ni metas comida, música o costumbres si el usuario no las ha pedido. "
+    "Si el usuario saluda, devuelve un saludo breve. Si el usuario comenta algo coloquial, contesta de forma breve y pegada a eso."
 )
 
 
@@ -359,6 +364,7 @@ def generate_text(
     retrieved: list[dict[str, str]],
     style_examples: list[str],
 ) -> str:
+    detected_intent = detect_prompt_intent(prompt)
     context_blocks = []
     context_budget = 0
     for index, item in enumerate(retrieved, start=1):
@@ -371,10 +377,14 @@ def generate_text(
     style_block = "\n\n".join(f"- {example}" for example in style_examples) if style_examples else "- Sin ejemplos adicionales."
 
     user_prompt = (
+        f"Tipo de intención detectada: {detected_intent}\n\n"
         f"Pregunta del usuario:\n{prompt}\n\n"
         f"Mini ejemplos de estilo canario que debes conservar:\n{style_block}\n\n"
         f"Contexto recuperado:\n{context}\n\n"
         "Instrucciones:\n"
+        "- Contesta solo a lo que se te acaba de decir, sin cambiar de tema.\n"
+        "- Si el usuario saluda o dice algo corto, responde corto.\n"
+        "- Si el usuario hace una valoración coloquial, responde a esa valoración y no conviertas la salida en una ficha cultural.\n"
         "- Usa el contexto recuperado solo para hechos, nombres, definiciones, lugares o matices documentales.\n"
         "- No copies el tono enciclopédico del contexto.\n"
         "- Mantén siempre una respuesta con sabor canario natural.\n"
@@ -409,6 +419,8 @@ def generate_text(
             do_sample=DO_SAMPLE,
             temperature=TEMPERATURE,
             top_p=TOP_P,
+            repetition_penalty=REPETITION_PENALTY,
+            no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
             use_cache=True,
@@ -550,6 +562,23 @@ def should_use_rag(prompt: str) -> bool:
     if any(marker in normalized for marker in factual_markers):
         return True
     return False
+
+
+def detect_prompt_intent(prompt: str) -> str:
+    normalized = normalize_text(prompt).lower()
+    if not normalized:
+        return "vacio"
+    if normalized in {"hola", "holaa", "buenas", "buenass", "ey", "hey", "hello"}:
+        return "saludo"
+    if normalized.startswith(("hola ", "buenas ", "hey ", "ey ")):
+        return "saludo"
+    if any(marker in normalized for marker in ("qué significa", "que significa", "qué es", "que es", "quién es", "quien es")):
+        return "pregunta_factual"
+    if "?" in normalized:
+        return "pregunta_general"
+    if any(marker in normalized for marker in ("bro", "tío", "tio", "eso es", "viva canarias", "qué bueno", "que bueno")):
+        return "comentario_coloquial"
+    return "comentario_general"
 
 
 if __name__ == "__main__":
