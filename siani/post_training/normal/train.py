@@ -78,7 +78,7 @@ class MessageCollator:
 
 def main() -> None:
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    print("[1/6] Inicializando entrenamiento de estilo...")
+    print("[1/6] Initializing style training...")
     set_seed(SEED)
 
     dataset_paths = resolve_dataset_paths()
@@ -90,7 +90,7 @@ def main() -> None:
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"[3/6] Cargando modelo base: {MODEL_NAME_OR_PATH}")
+    print(f"[3/6] Loading base model: {MODEL_NAME_OR_PATH}")
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME_OR_PATH,
         dtype=resolve_torch_dtype(TORCH_DTYPE),
@@ -101,7 +101,7 @@ def main() -> None:
     model = wrap_with_lora(model)
     prepare_model_for_training(model)
 
-    print("[4/6] Leyendo conversaciones...")
+    print("[4/6] Loading datasets...")
     train_dataset, eval_dataset = load_datasets(dataset_paths)
     print(f"       train={len(train_dataset)} eval={len(eval_dataset)}")
     has_eval = len(eval_dataset) > 0
@@ -134,7 +134,7 @@ def main() -> None:
         max_grad_norm=1.0,
     )
 
-    print("[5/6] Construyendo Trainer...")
+    print("[5/6] Building Trainer...")
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -145,24 +145,24 @@ def main() -> None:
     )
 
     write_run_config(dataset_paths, len(train_dataset), len(eval_dataset))
-    print("[6/6] Empezando train()...")
+    print("[6/6] Starting train()...")
     trainer.train()
     trainer.save_model()
     tokenizer.save_pretrained(OUTPUT_DIR)
-    print(f"Entrenamiento terminado. Modelo guardado en: {OUTPUT_DIR}")
+    print(f"Training finished. Model saved to: {OUTPUT_DIR}")
 
 
 def resolve_dataset_paths() -> list[Path]:
     if not DATASET_DIR.exists() or not DATASET_DIR.is_dir():
         raise FileNotFoundError(
-            "No encontré el directorio de datasets normales.\n"
-            f"Ruta esperada: {DATASET_DIR}"
+            "Could not find the normal dataset directory.\n"
+            f"Expected path: {DATASET_DIR}"
         )
     paths = sorted(path.resolve() for path in DATASET_DIR.glob("*.jsonl"))
     if not paths:
         raise FileNotFoundError(
-            "No encontré ningún .jsonl dentro del directorio de datasets normales.\n"
-            f"Ruta revisada: {DATASET_DIR}"
+            "No .jsonl files were found in the normal dataset directory.\n"
+            f"Checked path: {DATASET_DIR}"
         )
     return paths
 
@@ -196,8 +196,8 @@ def load_datasets(paths: list[Path]) -> tuple[MessageDataset, MessageDataset]:
 
     if not train_rows and not eval_rows:
         raise ValueError(
-            "No encontré ejemplos válidos en los datasets normales.\n"
-            f"Ficheros revisados: {', '.join(str(path) for path in paths)}"
+            "No valid examples were found in the normal datasets.\n"
+            f"Checked files: {', '.join(str(path) for path in paths)}"
         )
 
     return MessageDataset(train_rows), MessageDataset(eval_rows)

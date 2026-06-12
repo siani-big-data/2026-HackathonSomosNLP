@@ -94,34 +94,34 @@ class MessageCollator:
 
 def main() -> None:
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    print("[1/7] Inicializando entrenamiento estilo+RAG...")
+    print("[1/7] Initializing style+RAG training...")
     set_seed(SEED)
 
     original_dataset_path = resolve_original_dataset_path()
     knowledge_dirs = resolve_knowledge_dirs()
     if not knowledge_dirs:
-        raise FileNotFoundError("No encontré carpetas de conocimiento para academia_canaria/canariwiki/gevic.")
+        raise FileNotFoundError("Could not find knowledge directories for academia_canaria/canariwiki/gevic.")
     style_examples = load_style_examples()
 
-    print(f"[2/7] Indexando conocimiento para RAG desde {len(knowledge_dirs)} carpetas...")
+    print(f"[2/7] Indexing knowledge for RAG from {len(knowledge_dirs)} directories...")
     conn = build_or_refresh_index(knowledge_dirs)
 
-    print(f"[3/7] Construyendo dataset RAG desde dataset original: {original_dataset_path}")
+    print(f"[3/7] Building the RAG dataset from the original dataset: {original_dataset_path}")
     train_dataset, eval_dataset, original_dataset_for_run_config = load_and_augment_datasets(
         conn,
         original_dataset_path,
         style_examples,
     )
     print(f"       train={len(train_dataset)} eval={len(eval_dataset)}")
-    print(f"       dataset original={original_dataset_path}")
-    print(f"       dataset rag generado={AUGMENTED_DATASET_PATH}")
+    print(f"       original dataset={original_dataset_path}")
+    print(f"       generated RAG dataset={AUGMENTED_DATASET_PATH}")
     has_eval = len(eval_dataset) > 0
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_OR_PATH, use_fast=True)
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"[4/7] Cargando modelo base: {MODEL_NAME_OR_PATH}")
+    print(f"[4/7] Loading base model: {MODEL_NAME_OR_PATH}")
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME_OR_PATH,
         dtype=resolve_torch_dtype(TORCH_DTYPE),
@@ -129,7 +129,7 @@ def main() -> None:
     model.config.pad_token_id = tokenizer.pad_token_id
     model.config.use_cache = False
 
-    print("[5/7] Preparando LoRA...")
+    print("[5/7] Preparing LoRA...")
     model = load_or_create_trainable_lora(model)
     prepare_model_for_training(model)
 
@@ -161,7 +161,7 @@ def main() -> None:
         max_grad_norm=1.0,
     )
 
-    print("[6/7] Construyendo Trainer...")
+    print("[6/7] Building Trainer...")
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -172,21 +172,21 @@ def main() -> None:
     )
 
     write_run_config(original_dataset_for_run_config, len(train_dataset), len(eval_dataset))
-    print("[7/7] Empezando train()...")
+    print("[7/7] Starting train()...")
     trainer.train()
     trainer.save_model()
     tokenizer.save_pretrained(OUTPUT_DIR)
     conn.close()
-    print(f"Entrenamiento terminado. Modelo guardado en: {OUTPUT_DIR}")
+    print(f"Training finished. Model saved to: {OUTPUT_DIR}")
 
 
 def resolve_original_dataset_path() -> Path:
     if ORIGINAL_DATASET_PATH.exists():
         return ORIGINAL_DATASET_PATH.resolve()
     raise FileNotFoundError(
-        "No encontré el dataset original para construir el dataset normal_rag.\n"
-        f"Ruta esperada: {ORIGINAL_DATASET_PATH}\n"
-        "Este script genera el dataset RAG automáticamente a partir de ese dataset original."
+        "Could not find the original dataset needed to build the normal_rag dataset.\n"
+        f"Expected path: {ORIGINAL_DATASET_PATH}\n"
+        "This script builds the RAG dataset automatically from that original dataset."
     )
 
 
@@ -238,8 +238,8 @@ def load_and_augment_datasets(
 
     if not train_rows and not eval_rows:
         raise ValueError(
-            "No pude construir ejemplos válidos para el entrenamiento normal_rag.\n"
-            f"Revisa el formato del dataset original: {original_dataset_path}"
+            "Could not build valid examples for normal_rag training.\n"
+            f"Check the format of the original dataset: {original_dataset_path}"
         )
 
     write_augmented_dataset(written_rows)
@@ -269,21 +269,21 @@ def augment_messages_with_rag(
     if should_use_rag(original_prompt):
         retrieved = search_chunks(conn, original_prompt, TOP_K)
 
-    style_block = "\n\n".join(f"- {example}" for example in style_examples[:MAX_STYLE_EXAMPLES]) if style_examples else "- Sin ejemplos adicionales."
+    style_block = "\n\n".join(f"- {example}" for example in style_examples[:MAX_STYLE_EXAMPLES]) if style_examples else "- No additional style examples."
     context_block = build_context_block(retrieved)
     detected_intent = detect_prompt_intent(original_prompt)
 
     augmented_user_prompt = (
-        f"Tipo de intención detectada: {detected_intent}\n\n"
-        f"Pregunta del usuario:\n{original_prompt}\n\n"
-        f"Mini ejemplos de estilo canario que debes conservar:\n{style_block}\n\n"
-        f"Contexto recuperado:\n{context_block}\n\n"
-        "Instrucciones:\n"
-        "- Responde con estilo canario natural y cercano.\n"
-        "- Usa el contexto recuperado solo para hechos, definiciones, lugares, nombres o matices documentales.\n"
-        "- No copies un tono enciclopédico aunque el contexto lo tenga.\n"
-        "- Si el contexto no aporta nada útil, responde igual con naturalidad y sin inventar datos concretos.\n"
-        "- Mantente pegado a la intención del usuario."
+        f"Detected intent type: {detected_intent}\n\n"
+        f"User question:\n{original_prompt}\n\n"
+        f"Short Canary style examples to preserve:\n{style_block}\n\n"
+        f"Retrieved context:\n{context_block}\n\n"
+        "Instructions:\n"
+        "- Reply with natural, close, Canary-style wording.\n"
+        "- Use the retrieved context only for facts, definitions, places, names, or documentary nuances.\n"
+        "- Do not copy an encyclopedic tone even if the context has one.\n"
+        "- If the context is not useful, still answer naturally and do not invent specific facts.\n"
+        "- Stay tightly aligned with the user's intent."
     )
 
     system_prompt = ensure_system_prompt(normalized_messages)
@@ -296,10 +296,7 @@ def ensure_system_prompt(messages: list[dict[str, str]]) -> str:
     if messages and messages[0].get("role") == "system":
         original = str(messages[0].get("content", "")).strip()
         if original:
-            return (
-                original
-                + " Cuando tengas contexto recuperado, úsalo para los hechos pero sin perder el estilo canario."
-            )
+            return original + " When retrieved context is available, use it for facts without losing the Canary style."
     if messages:
         messages.insert(0, {"role": "system", "content": DEFAULT_SYSTEM_PROMPT})
     return DEFAULT_SYSTEM_PROMPT
@@ -307,16 +304,16 @@ def ensure_system_prompt(messages: list[dict[str, str]]) -> str:
 
 def build_context_block(retrieved: list[dict[str, str]]) -> str:
     if not retrieved:
-        return "No se recuperó contexto."
+        return "No context was retrieved."
     blocks: list[str] = []
     budget = 0
     for index, item in enumerate(retrieved, start=1):
-        block = f"[{index}] fuente={item['source']} titulo={item['title']}\n{item['text']}"
+        block = f"[{index}] source={item['source']} title={item['title']}\n{item['text']}"
         if budget + len(block) > MAX_CONTEXT_CHARS:
             break
         blocks.append(block)
         budget += len(block)
-    return "\n\n".join(blocks) if blocks else "No se recuperó contexto."
+    return "\n\n".join(blocks) if blocks else "No context was retrieved."
 
 
 def write_augmented_dataset(rows: list[dict[str, Any]]) -> None:
@@ -392,11 +389,11 @@ def prepare_model_for_training(model: Any) -> None:
         model.enable_input_require_grads()
 
 
-def write_run_config(dataset_paths: list[Path], train_size: int, eval_size: int) -> None:
+def write_run_config(dataset_path: Path, train_size: int, eval_size: int) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
         "model_name_or_path": MODEL_NAME_OR_PATH,
-        "dataset_paths": [str(path) for path in dataset_paths],
+        "dataset_path": str(dataset_path),
         "output_dir": str(OUTPUT_DIR),
         "base_style_checkpoint": str(BASE_STYLE_CHECKPOINT),
         "augmented_dataset_path": str(AUGMENTED_DATASET_PATH),

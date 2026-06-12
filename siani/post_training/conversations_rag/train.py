@@ -93,35 +93,53 @@ class MessageCollator:
 
 
 def main() -> None:
+    train_conversations_rag()
+
+
+def train_conversations_rag(
+    *,
+    original_dataset_path: Path | None = None,
+    output_dir: Path | None = None,
+    base_lora_checkpoint: Path | None = BASE_STYLE_CHECKPOINT,
+    augmented_dataset_path: Path | None = None,
+) -> Path:
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    print("[1/7] Inicializando entrenamiento estilo+RAG...")
+    print("[1/7] Initializing style+RAG training...")
     set_seed(SEED)
 
-    original_dataset_path = resolve_original_dataset_path()
+    resolved_original_dataset_path = resolve_original_dataset_path(original_dataset_path)
+    resolved_output_dir = (output_dir or OUTPUT_DIR).resolve()
+    resolved_augmented_dataset_path = (augmented_dataset_path or AUGMENTED_DATASET_PATH).resolve()
+    resolved_base_lora_checkpoint = base_lora_checkpoint.resolve() if base_lora_checkpoint is not None else None
+
     knowledge_dirs = resolve_knowledge_dirs()
     if not knowledge_dirs:
-        raise FileNotFoundError("No encontré carpetas de conocimiento para academia_canaria/canariwiki/gevic.")
+        raise FileNotFoundError("Could not find knowledge directories for academia_canaria/canariwiki/gevic.")
     style_examples = load_style_examples()
 
-    print(f"[2/7] Indexando conocimiento para RAG desde {len(knowledge_dirs)} carpetas...")
+    print(f"[2/7] Indexing knowledge for RAG from {len(knowledge_dirs)} directories...")
     conn = build_or_refresh_index(knowledge_dirs)
 
-    print(f"[3/7] Construyendo dataset RAG desde dataset original: {original_dataset_path}")
+    print(f"[3/7] Building the RAG dataset from the original dataset: {resolved_original_dataset_path}")
+    if resolved_base_lora_checkpoint is not None:
+        print(f"       base LoRA checkpoint: {resolved_base_lora_checkpoint}")
+    print(f"       output dir: {resolved_output_dir}")
     train_dataset, eval_dataset, original_dataset_for_run_config = load_and_augment_datasets(
         conn,
-        original_dataset_path,
+        resolved_original_dataset_path,
         style_examples,
+        resolved_augmented_dataset_path,
     )
     print(f"       train={len(train_dataset)} eval={len(eval_dataset)}")
-    print(f"       dataset original={original_dataset_path}")
-    print(f"       dataset rag generado={AUGMENTED_DATASET_PATH}")
+    print(f"       original dataset={resolved_original_dataset_path}")
+    print(f"       generated RAG dataset={resolved_augmented_dataset_path}")
     has_eval = len(eval_dataset) > 0
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_OR_PATH, use_fast=True)
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"[4/7] Cargando modelo base: {MODEL_NAME_OR_PATH}")
+    print(f"[4/7] Loading base model: {MODEL_NAME_OR_PATH}")
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME_OR_PATH,
         dtype=resolve_torch_dtype(TORCH_DTYPE),
@@ -129,12 +147,12 @@ def main() -> None:
     model.config.pad_token_id = tokenizer.pad_token_id
     model.config.use_cache = False
 
-    print("[5/7] Preparando LoRA...")
-    model = load_or_create_trainable_lora(model)
+    print("[5/7] Preparing LoRA...")
+    model = load_or_create_trainable_lora(model, resolved_base_lora_checkpoint)
     prepare_model_for_training(model)
 
     training_args = TrainingArguments(
-        output_dir=str(OUTPUT_DIR),
+        output_dir=str(resolved_output_dir),
         overwrite_output_dir=False,
         do_train=True,
         do_eval=has_eval,
@@ -161,7 +179,7 @@ def main() -> None:
         max_grad_norm=1.0,
     )
 
-    print("[6/7] Construyendo Trainer...")
+    print("[6/7] Building Trainer...")
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -171,22 +189,31 @@ def main() -> None:
         processing_class=tokenizer,
     )
 
-    write_run_config(original_dataset_for_run_config, len(train_dataset), len(eval_dataset))
-    print("[7/7] Empezando train()...")
+    write_run_config(
+        dataset_path=original_dataset_for_run_config,
+        output_dir=resolved_output_dir,
+        train_size=len(train_dataset),
+        eval_size=len(eval_dataset),
+        base_lora_checkpoint=resolved_base_lora_checkpoint,
+        augmented_dataset_path=resolved_augmented_dataset_path,
+    )
+    print("[7/7] Starting train()...")
     trainer.train()
     trainer.save_model()
-    tokenizer.save_pretrained(OUTPUT_DIR)
+    tokenizer.save_pretrained(resolved_output_dir)
     conn.close()
-    print(f"Entrenamiento terminado. Modelo guardado en: {OUTPUT_DIR}")
+    print(f"Training finished. Model saved to: {resolved_output_dir}")
+    return resolved_output_dir
 
 
-def resolve_original_dataset_path() -> Path:
-    if ORIGINAL_DATASET_PATH.exists():
-        return ORIGINAL_DATASET_PATH.resolve()
+def resolve_original_dataset_path(original_dataset_path: Path | None = None) -> Path:
+    resolved_original_dataset_path = (original_dataset_path or ORIGINAL_DATASET_PATH).resolve()
+    if resolved_original_dataset_path.exists():
+        return resolved_original_dataset_path
     raise FileNotFoundError(
-        "No encontré el dataset original de conversaciones para construir el dataset RAG.\n"
-        f"Ruta esperada: {ORIGINAL_DATASET_PATH}\n"
-        "Este script genera el dataset RAG automáticamente a partir de ese dataset original."
+        "Could not find the original conversation dataset needed to build the RAG dataset.\n"
+        f"Expected path: {resolved_original_dataset_path}\n"
+        "This script builds the RAG dataset automatically from that original dataset."
     )
 
 
@@ -194,6 +221,7 @@ def load_and_augment_datasets(
     conn: sqlite3.Connection,
     original_dataset_path: Path,
     style_examples: list[str],
+    augmented_dataset_path: Path,
 ) -> tuple[MessageDataset, MessageDataset, Path]:
     train_rows: list[MessageExample] = []
     eval_rows: list[MessageExample] = []
@@ -238,11 +266,11 @@ def load_and_augment_datasets(
 
     if not train_rows and not eval_rows:
         raise ValueError(
-            "No pude construir ejemplos válidos para el entrenamiento conversations_rag.\n"
-            f"Revisa el formato del dataset original: {original_dataset_path}"
+            "Could not build valid examples for conversations_rag training.\n"
+            f"Check the format of the original dataset: {original_dataset_path}"
         )
 
-    write_augmented_dataset(written_rows)
+    write_augmented_dataset(written_rows, augmented_dataset_path)
     return MessageDataset(train_rows), MessageDataset(eval_rows), original_dataset_path
 
 
@@ -269,21 +297,21 @@ def augment_messages_with_rag(
     if should_use_rag(original_prompt):
         retrieved = search_chunks(conn, original_prompt, TOP_K)
 
-    style_block = "\n\n".join(f"- {example}" for example in style_examples[:MAX_STYLE_EXAMPLES]) if style_examples else "- Sin ejemplos adicionales."
+    style_block = "\n\n".join(f"- {example}" for example in style_examples[:MAX_STYLE_EXAMPLES]) if style_examples else "- No additional style examples."
     context_block = build_context_block(retrieved)
     detected_intent = detect_prompt_intent(original_prompt)
 
     augmented_user_prompt = (
-        f"Tipo de intención detectada: {detected_intent}\n\n"
-        f"Pregunta del usuario:\n{original_prompt}\n\n"
-        f"Mini ejemplos de estilo canario que debes conservar:\n{style_block}\n\n"
-        f"Contexto recuperado:\n{context_block}\n\n"
-        "Instrucciones:\n"
-        "- Responde con estilo canario natural y cercano.\n"
-        "- Usa el contexto recuperado solo para hechos, definiciones, lugares, nombres o matices documentales.\n"
-        "- No copies un tono enciclopédico aunque el contexto lo tenga.\n"
-        "- Si el contexto no aporta nada útil, responde igual con naturalidad y sin inventar datos concretos.\n"
-        "- Mantente pegado a la intención del usuario."
+        f"Detected intent type: {detected_intent}\n\n"
+        f"User question:\n{original_prompt}\n\n"
+        f"Short Canary style examples to preserve:\n{style_block}\n\n"
+        f"Retrieved context:\n{context_block}\n\n"
+        "Instructions:\n"
+        "- Reply with natural, close, Canary-style wording.\n"
+        "- Use the retrieved context only for facts, definitions, places, names, or documentary nuances.\n"
+        "- Do not copy an encyclopedic tone even if the context has one.\n"
+        "- If the context is not useful, still answer naturally and do not invent specific facts.\n"
+        "- Stay tightly aligned with the user's intent."
     )
 
     system_prompt = ensure_system_prompt(normalized_messages)
@@ -298,7 +326,7 @@ def ensure_system_prompt(messages: list[dict[str, str]]) -> str:
         if original:
             return (
                 original
-                + " Cuando tengas contexto recuperado, úsalo para los hechos pero sin perder el estilo canario."
+                + " When retrieved context is available, use it for facts without losing the Canary style."
             )
     if messages:
         messages.insert(0, {"role": "system", "content": DEFAULT_SYSTEM_PROMPT})
@@ -307,21 +335,21 @@ def ensure_system_prompt(messages: list[dict[str, str]]) -> str:
 
 def build_context_block(retrieved: list[dict[str, str]]) -> str:
     if not retrieved:
-        return "No se recuperó contexto."
+        return "No context was retrieved."
     blocks: list[str] = []
     budget = 0
     for index, item in enumerate(retrieved, start=1):
-        block = f"[{index}] fuente={item['source']} titulo={item['title']}\n{item['text']}"
+        block = f"[{index}] source={item['source']} title={item['title']}\n{item['text']}"
         if budget + len(block) > MAX_CONTEXT_CHARS:
             break
         blocks.append(block)
         budget += len(block)
-    return "\n\n".join(blocks) if blocks else "No se recuperó contexto."
+    return "\n\n".join(blocks) if blocks else "No context was retrieved."
 
 
-def write_augmented_dataset(rows: list[dict[str, Any]]) -> None:
-    AUGMENTED_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with AUGMENTED_DATASET_PATH.open("w", encoding="utf-8") as handle:
+def write_augmented_dataset(rows: list[dict[str, Any]], augmented_dataset_path: Path) -> None:
+    augmented_dataset_path.parent.mkdir(parents=True, exist_ok=True)
+    with augmented_dataset_path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -365,9 +393,15 @@ def resolve_torch_dtype(value: str | None) -> torch.dtype | None:
     return mapping[value]
 
 
-def load_or_create_trainable_lora(model: Any) -> Any:
-    checkpoint_dir = BASE_STYLE_CHECKPOINT.resolve()
-    if checkpoint_dir.exists() and (checkpoint_dir / "adapter_config.json").exists():
+def load_or_create_trainable_lora(model: Any, base_lora_checkpoint: Path | None) -> Any:
+    checkpoint_dir = base_lora_checkpoint.resolve() if base_lora_checkpoint is not None else None
+    if checkpoint_dir is not None:
+        adapter_config_path = checkpoint_dir / "adapter_config.json"
+        if not checkpoint_dir.exists() or not adapter_config_path.exists():
+            raise FileNotFoundError(
+                "Could not find the base LoRA checkpoint to start conversations_rag training.\n"
+                f"Expected path: {checkpoint_dir}"
+            )
         model = PeftModel.from_pretrained(model, str(checkpoint_dir), is_trainable=True)
         model.print_trainable_parameters()
         return model
@@ -392,14 +426,22 @@ def prepare_model_for_training(model: Any) -> None:
         model.enable_input_require_grads()
 
 
-def write_run_config(dataset_path: Path, train_size: int, eval_size: int) -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def write_run_config(
+    *,
+    dataset_path: Path,
+    output_dir: Path,
+    train_size: int,
+    eval_size: int,
+    base_lora_checkpoint: Path | None,
+    augmented_dataset_path: Path,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "model_name_or_path": MODEL_NAME_OR_PATH,
         "dataset_path": str(dataset_path),
-        "output_dir": str(OUTPUT_DIR),
-        "base_style_checkpoint": str(BASE_STYLE_CHECKPOINT),
-        "augmented_dataset_path": str(AUGMENTED_DATASET_PATH),
+        "output_dir": str(output_dir),
+        "base_style_checkpoint": str(base_lora_checkpoint) if base_lora_checkpoint is not None else None,
+        "augmented_dataset_path": str(augmented_dataset_path),
         "max_length": MAX_LENGTH,
         "learning_rate": LEARNING_RATE,
         "num_train_epochs": NUM_TRAIN_EPOCHS,
@@ -410,7 +452,7 @@ def write_run_config(dataset_path: Path, train_size: int, eval_size: int) -> Non
         "lora_alpha": LORA_ALPHA,
         "lora_dropout": LORA_DROPOUT,
     }
-    (OUTPUT_DIR / "run_config.json").write_text(
+    (output_dir / "run_config.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

@@ -37,15 +37,15 @@ MAX_STYLE_EXAMPLES = 2
 MAX_HISTORY_MESSAGES = 8
 
 DEFAULT_SYSTEM_PROMPT = (
-    "Eres un asistente virtual de Canarias. "
-    "Respondes usando el léxico, la sintaxis y las expresiones típicas del habla canaria. "
-    "Cuando haya contexto recuperado de la base de conocimiento, úsalo como fuente principal, "
-    "sin inventarte datos que contradigan ese contexto. "
-    "El contexto recuperado solo aporta hechos y referencias; no debes copiar su registro si suena enciclopédico o neutro. "
-    "Mantén siempre una salida natural, clara y reconociblemente canaria. "
-    "Responde solo a la intención concreta del último mensaje del usuario. "
-    "No recicles ejemplos de entrenamiento ni metas comida, música o costumbres si el usuario no las ha pedido. "
-    "Si el usuario saluda, devuelve un saludo breve. Si el usuario comenta algo coloquial, contesta de forma breve y pegada a eso."
+    "You are a virtual assistant from the Canary Islands. "
+    "You reply using the vocabulary, syntax, and natural phrasing of Canary Islands Spanish. "
+    "When retrieved knowledge-base context is available, use it as the primary factual source "
+    "without inventing details that contradict it. "
+    "Retrieved context only provides facts and references; do not copy its tone if it feels encyclopedic or neutral. "
+    "Always keep the output natural, clear, and recognizably Canarian. "
+    "Reply only to the concrete intent of the user's latest message. "
+    "Do not recycle training examples or inject food, music, or customs unless the user asks for them. "
+    "If the user greets you, return a short greeting. If the user makes a casual remark, answer briefly and stay close to that remark."
 )
 
 
@@ -53,43 +53,43 @@ def main() -> None:
     checkpoint_dir = CHECKPOINT_DIR.resolve()
     if not checkpoint_dir.exists():
         raise FileNotFoundError(
-            "No encontré el checkpoint del modelo conversations_rag.\n"
-            f"Ruta esperada: {checkpoint_dir}\n"
-            "Entrena primero con siani/post_training/conversations_rag/train.py."
+            "Could not find the conversations_rag model checkpoint.\n"
+            f"Expected path: {checkpoint_dir}\n"
+            "Train it first with siani/post_training/conversations_rag/train.py."
         )
 
     knowledge_dirs = resolve_knowledge_dirs()
     if not knowledge_dirs:
         raise FileNotFoundError(
-            "No encontré carpetas de conocimiento para RAG.\n"
-            f"Raíz revisada: {KNOWLEDGE_ROOT}\n"
-            "Se esperan al menos estas carpetas: academia_canaria, canariwiki, gevic."
+            "Could not find the knowledge directories for RAG.\n"
+            f"Checked root: {KNOWLEDGE_ROOT}\n"
+            "Expected at least these directories: academia_canaria, canariwiki, gevic."
         )
     style_examples = load_style_examples()
 
-    print(f"[1/5] Construyendo o abriendo índice RAG: {RAG_DB_PATH}")
+    print(f"[1/5] Building or opening the RAG index: {RAG_DB_PATH}")
     conn = build_or_refresh_index(knowledge_dirs)
 
-    print(f"[2/5] Resolviendo checkpoint: {checkpoint_dir}")
+    print(f"[2/5] Resolving checkpoint: {checkpoint_dir}")
     base_model_name = resolve_base_model_name(checkpoint_dir)
 
-    print(f"[3/5] Cargando tokenizer desde: {checkpoint_dir}")
+    print(f"[3/5] Loading tokenizer from: {checkpoint_dir}")
     tokenizer = AutoTokenizer.from_pretrained(str(checkpoint_dir), use_fast=True)
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"[4/5] Cargando modelo base: {base_model_name}")
+    print(f"[4/5] Loading base model: {base_model_name}")
     model = AutoModelForCausalLM.from_pretrained(
         base_model_name,
         dtype=resolve_torch_dtype(TORCH_DTYPE),
         device_map="auto",
     )
     if is_lora_checkpoint(checkpoint_dir):
-        print(f"       Aplicando adaptador LoRA desde: {checkpoint_dir}")
+        print(f"       Applying LoRA adapter from: {checkpoint_dir}")
         model = PeftModel.from_pretrained(model, str(checkpoint_dir))
 
     model.eval()
-    print("[5/5] Listo. Escribe una pregunta. Sal con 'exit' o 'quit'.")
+    print("[5/5] Ready. Type a question. Exit with 'exit' or 'quit'.")
     conversation_history: list[dict[str, str]] = []
 
     while True:
@@ -109,20 +109,20 @@ def main() -> None:
         retrieved: list[dict[str, str]] = []
         if use_rag:
             retrieved = search_chunks(conn, effective_prompt, TOP_K)
-            print("\nContexto recuperado:\n")
+            print("\nRetrieved context:\n")
             if not retrieved:
-                print("(sin resultados)")
+                print("(no results)")
             else:
                 for index, item in enumerate(retrieved, start=1):
                     print(f"[{index}] {item['source']} :: {item['title']}")
                     print(item["text"][:280].strip())
                     print()
         else:
-            print("\nContexto recuperado:\n")
-            print("(RAG desactivado para este prompt)")
+            print("\nRetrieved context:\n")
+            print("(RAG disabled for this prompt)")
 
         output = generate_text(model, tokenizer, prompt, effective_prompt, retrieved, style_examples, conversation_history)
-        print("\nSalida:\n")
+        print("\nOutput:\n")
         print(output)
         conversation_history.extend(
             [
@@ -384,29 +384,29 @@ def generate_text(
     context_blocks = []
     context_budget = 0
     for index, item in enumerate(retrieved, start=1):
-        block = f"[{index}] fuente={item['source']} titulo={item['title']}\n{item['text']}"
+        block = f"[{index}] source={item['source']} title={item['title']}\n{item['text']}"
         if context_budget + len(block) > MAX_CONTEXT_CHARS:
             break
         context_blocks.append(block)
         context_budget += len(block)
-    context = "\n\n".join(context_blocks) if context_blocks else "No se recuperó contexto."
-    style_block = "\n\n".join(f"- {example}" for example in style_examples) if style_examples else "- Sin ejemplos adicionales."
+    context = "\n\n".join(context_blocks) if context_blocks else "No context was retrieved."
+    style_block = "\n\n".join(f"- {example}" for example in style_examples) if style_examples else "- No additional style examples."
 
     user_prompt = (
-        f"Tipo de intención detectada: {detected_intent}\n\n"
-        f"Pregunta del usuario:\n{prompt}\n\n"
-        f"Consulta resuelta para memoria y recuperación:\n{effective_prompt}\n\n"
-        f"Mini ejemplos de estilo canario que debes conservar:\n{style_block}\n\n"
-        f"Contexto recuperado:\n{context}\n\n"
-        "Instrucciones:\n"
-        "- Contesta solo a lo que se te acaba de decir, sin cambiar de tema.\n"
-        "- Si el usuario saluda o dice algo corto, responde corto.\n"
-        "- Si el usuario hace una valoración coloquial, responde a esa valoración y no conviertas la salida en una ficha cultural.\n"
-        "- Usa el contexto recuperado solo para hechos, nombres, definiciones, lugares o matices documentales.\n"
-        "- No copies el tono enciclopédico del contexto.\n"
-        "- Mantén siempre una respuesta con sabor canario natural.\n"
-        "- Si el contexto no basta, dilo con naturalidad y no inventes datos concretos.\n"
-        "- Si la pregunta no necesita conocimiento externo, responde con tu estilo normal y listo."
+        f"Detected intent type: {detected_intent}\n\n"
+        f"User question:\n{prompt}\n\n"
+        f"Resolved query for memory and retrieval:\n{effective_prompt}\n\n"
+        f"Short Canary style examples to preserve:\n{style_block}\n\n"
+        f"Retrieved context:\n{context}\n\n"
+        "Instructions:\n"
+        "- Answer only what was just asked, without changing the topic.\n"
+        "- If the user greets you or sends a short message, answer briefly.\n"
+        "- If the user makes a casual remark, respond to that remark and do not turn the answer into a cultural fact sheet.\n"
+        "- Use the retrieved context only for facts, names, definitions, places, or documentary nuances.\n"
+        "- Do not copy the encyclopedic tone of the context.\n"
+        "- Always keep a natural Canary-flavored answer.\n"
+        "- If the context is insufficient, say so naturally and do not invent specific facts.\n"
+        "- If the question does not need external knowledge, answer in your normal style and move on."
     )
     messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT}]
     if conversation_history:
@@ -532,27 +532,24 @@ def build_effective_prompt(prompt: str, conversation_history: list[dict[str, str
     if not last_user_topic:
         return prompt
 
-    return f"{last_user_topic}\nSeguimiento del usuario: {prompt}"
+    return f"{last_user_topic}\nUser follow-up: {prompt}"
 
 
 def is_follow_up_prompt(prompt: str) -> bool:
     normalized = normalize_text(prompt).lower()
     follow_up_markers = (
-        "más",
+        "more",
         "mas",
-        "y eso",
-        "y tal",
-        "porfa",
-        "explícame mejor",
-        "explicame mejor",
-        "desarrolla",
-        "sigue",
-        "continúa",
-        "continua",
-        "venga",
-        "dale",
-        "y después",
-        "y despues",
+        "and that",
+        "and stuff",
+        "please",
+        "explain better",
+        "expand",
+        "continue",
+        "go on",
+        "come on",
+        "go ahead",
+        "and then",
     )
     if len(normalized) <= 20:
         return True
@@ -575,62 +572,53 @@ def should_use_rag(prompt: str) -> bool:
         return False
 
     factual_markers = (
-        "qué significa",
-        "que significa",
-        "qué es",
-        "que es",
-        "quién es",
-        "quien es",
-        "dónde",
-        "donde",
-        "cuándo",
-        "cuando",
-        "origen",
-        "topónimo",
-        "toponimo",
-        "definición",
-        "definicion",
-        "etimología",
-        "etimologia",
-        "historia",
-        "cultura",
+        "what does",
+        "what is",
+        "who is",
+        "where",
+        "when",
+        "origin",
+        "toponym",
+        "definition",
+        "etymology",
+        "history",
+        "culture",
         "guanche",
-        "aborigen",
-        "aborígen",
-        "bosques",
+        "aboriginal",
+        "forests",
         "tabaibas",
         "flora",
         "fauna",
         "academia canaria",
         "canariwiki",
         "gevic",
-        "patrimonio",
-        "consulta",
+        "heritage",
+        "consultation",
     )
 
     if "?" in normalized and any(marker in normalized for marker in factual_markers):
         return True
-    if any(normalized.startswith(prefix) for prefix in ("qué", "que", "quién", "quien", "dónde", "donde", "cuándo", "cuando")):
+    if any(normalized.startswith(prefix) for prefix in ("what", "who", "where", "when")):
         return True
     if any(marker in normalized for marker in factual_markers):
         return True
 
-    if normalized.startswith(("cuéntame", "cuentame", "háblame", "hablame", "dime", "explícame", "explicame")) and len(normalized) > 24:
+    if normalized.startswith(("tell me", "explain", "talk to me", "say", "describe")) and len(normalized) > 24:
         return True
 
     skip_markers = (
-        "imagina",
-        "escribe",
-        "redacta",
-        "inventa",
-        "dime algo",
-        "salúdame",
-        "hazme un chiste",
-        "opina",
-        "qué te parece",
-        "tu comida favorita",
-        "tu película favorita",
-        "cómo sería",
+        "imagine",
+        "write",
+        "draft",
+        "invent",
+        "tell me something",
+        "greet me",
+        "tell me a joke",
+        "opine",
+        "what do you think",
+        "your favorite food",
+        "your favorite movie",
+        "what would it be like",
     )
     if any(marker in normalized for marker in skip_markers):
         return False
@@ -643,18 +631,18 @@ def should_use_rag(prompt: str) -> bool:
 def detect_prompt_intent(prompt: str) -> str:
     normalized = normalize_text(prompt).lower()
     if not normalized:
-        return "vacio"
-    if normalized in {"hola", "holaa", "buenas", "buenass", "ey", "hey", "hello"}:
-        return "saludo"
-    if normalized.startswith(("hola ", "buenas ", "hey ", "ey ")):
-        return "saludo"
-    if any(marker in normalized for marker in ("qué significa", "que significa", "qué es", "que es", "quién es", "quien es")):
-        return "pregunta_factual"
+        return "empty"
+    if normalized in {"hello", "hi", "hey", "good morning", "good evening"}:
+        return "greeting"
+    if normalized.startswith(("hello ", "hi ", "hey ")):
+        return "greeting"
+    if any(marker in normalized for marker in ("what does", "what is", "who is")):
+        return "factual_question"
     if "?" in normalized:
-        return "pregunta_general"
-    if any(marker in normalized for marker in ("bro", "tío", "tio", "eso es", "viva canarias", "qué bueno", "que bueno")):
-        return "comentario_coloquial"
-    return "comentario_general"
+        return "general_question"
+    if any(marker in normalized for marker in ("bro", "dude", "that's it", "long live canary islands", "nice", "great")):
+        return "casual_comment"
+    return "general_comment"
 
 
 if __name__ == "__main__":

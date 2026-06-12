@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from peft import LoraConfig, TaskType, get_peft_model
+from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 from torch.utils.data import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, set_seed
 
@@ -15,6 +15,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingA
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATASET_PATH = REPO_ROOT / "siani" / "data" / "post" / "canary_style_conversation.jsonl"
 OUTPUT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_conversations_lora"
+BASE_LORA_CHECKPOINT = None
 
 MODEL_NAME_OR_PATH = "Qwen/Qwen2.5-7B-Instruct"
 SEED = 42
@@ -77,18 +78,33 @@ class MessageCollator:
 
 
 def main() -> None:
+    train_conversations()
+
+
+def train_conversations(
+    *,
+    dataset_path: Path | None = None,
+    output_dir: Path | None = None,
+    base_lora_checkpoint: Path | None = BASE_LORA_CHECKPOINT,
+) -> Path:
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    print("[1/6] Inicializando entrenamiento de estilo...")
+    print("[1/6] Initializing style training...")
     set_seed(SEED)
 
-    dataset_path = resolve_dataset_path()
-    print(f"[2/6] Dataset: {dataset_path}")
+    resolved_dataset_path = resolve_dataset_path(dataset_path)
+    resolved_output_dir = (output_dir or OUTPUT_DIR).resolve()
+    resolved_base_lora_checkpoint = base_lora_checkpoint.resolve() if base_lora_checkpoint is not None else None
+
+    print(f"[2/6] Dataset: {resolved_dataset_path}")
+    if resolved_base_lora_checkpoint is not None:
+        print(f"       base LoRA checkpoint: {resolved_base_lora_checkpoint}")
+    print(f"       output dir: {resolved_output_dir}")
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_OR_PATH, use_fast=True)
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"[3/6] Cargando modelo base: {MODEL_NAME_OR_PATH}")
+    print(f"[3/6] Loading base model: {MODEL_NAME_OR_PATH}")
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME_OR_PATH,
         dtype=resolve_torch_dtype(TORCH_DTYPE),
@@ -96,16 +112,16 @@ def main() -> None:
     model.config.pad_token_id = tokenizer.pad_token_id
     model.config.use_cache = False
 
-    model = wrap_with_lora(model)
+    model = load_or_create_trainable_lora(model, resolved_base_lora_checkpoint)
     prepare_model_for_training(model)
 
-    print("[4/6] Leyendo conversaciones...")
-    train_dataset, eval_dataset = load_dataset(dataset_path)
+    print("[4/6] Loading conversations...")
+    train_dataset, eval_dataset = load_dataset(resolved_dataset_path)
     print(f"       train={len(train_dataset)} eval={len(eval_dataset)}")
     has_eval = len(eval_dataset) > 0
 
     training_args = TrainingArguments(
-        output_dir=str(OUTPUT_DIR),
+        output_dir=str(resolved_output_dir),
         overwrite_output_dir=False,
         do_train=True,
         do_eval=has_eval,
@@ -132,7 +148,7 @@ def main() -> None:
         max_grad_norm=1.0,
     )
 
-    print("[5/6] Construyendo Trainer...")
+    print("[5/6] Building Trainer...")
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -142,22 +158,30 @@ def main() -> None:
         processing_class=tokenizer,
     )
 
-    write_run_config(dataset_path, len(train_dataset), len(eval_dataset))
-    print("[6/6] Empezando train()...")
+    write_run_config(
+        dataset_path=resolved_dataset_path,
+        output_dir=resolved_output_dir,
+        train_size=len(train_dataset),
+        eval_size=len(eval_dataset),
+        base_lora_checkpoint=resolved_base_lora_checkpoint,
+    )
+    print("[6/6] Starting train()...")
     trainer.train()
     trainer.save_model()
-    tokenizer.save_pretrained(OUTPUT_DIR)
-    print(f"Entrenamiento terminado. Modelo guardado en: {OUTPUT_DIR}")
+    tokenizer.save_pretrained(resolved_output_dir)
+    print(f"Training finished. Model saved to: {resolved_output_dir}")
+    return resolved_output_dir
 
 
-def resolve_dataset_path() -> Path:
-    if not DATASET_PATH.exists():
+def resolve_dataset_path(dataset_path: Path | None = None) -> Path:
+    resolved_dataset_path = (dataset_path or DATASET_PATH).resolve()
+    if not resolved_dataset_path.exists():
         raise FileNotFoundError(
-            "No encontré el dataset de conversaciones.\n"
-            f"Ruta esperada: {DATASET_PATH}\n"
-            "Asegúrate de que exista el fichero canary_style_conversation.jsonl dentro de siani/data/post/."
+            "Could not find the conversation dataset.\n"
+            f"Expected path: {resolved_dataset_path}\n"
+            "Make sure canary_style_conversation.jsonl exists under siani/data/post/."
         )
-    return DATASET_PATH.resolve()
+    return resolved_dataset_path
 
 
 def load_dataset(path: Path) -> tuple[MessageDataset, MessageDataset]:
@@ -188,8 +212,8 @@ def load_dataset(path: Path) -> tuple[MessageDataset, MessageDataset]:
 
     if not train_rows and not eval_rows:
         raise ValueError(
-            "No encontré ejemplos válidos en el dataset de conversaciones.\n"
-            f"Revisa el formato de messages dentro de: {path}"
+            "No valid examples were found in the conversation dataset.\n"
+            f"Check the messages format in: {path}"
         )
 
     return MessageDataset(train_rows), MessageDataset(eval_rows)
@@ -234,7 +258,18 @@ def resolve_torch_dtype(value: str | None) -> torch.dtype | None:
     return mapping[value]
 
 
-def wrap_with_lora(model: Any) -> Any:
+def load_or_create_trainable_lora(model: Any, base_lora_checkpoint: Path | None) -> Any:
+    if base_lora_checkpoint is not None:
+        adapter_config_path = base_lora_checkpoint / "adapter_config.json"
+        if not base_lora_checkpoint.exists() or not adapter_config_path.exists():
+            raise FileNotFoundError(
+                "Could not find the base LoRA checkpoint for conversational training.\n"
+                f"Expected path: {base_lora_checkpoint}"
+            )
+        model = PeftModel.from_pretrained(model, str(base_lora_checkpoint), is_trainable=True)
+        model.print_trainable_parameters()
+        return model
+
     lora_config = LoraConfig(
         r=LORA_RANK,
         lora_alpha=LORA_ALPHA,
@@ -255,12 +290,20 @@ def prepare_model_for_training(model: Any) -> None:
         model.enable_input_require_grads()
 
 
-def write_run_config(dataset_path: Path, train_size: int, eval_size: int) -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def write_run_config(
+    *,
+    dataset_path: Path,
+    output_dir: Path,
+    train_size: int,
+    eval_size: int,
+    base_lora_checkpoint: Path | None,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "model_name_or_path": MODEL_NAME_OR_PATH,
         "dataset_path": str(dataset_path),
-        "output_dir": str(OUTPUT_DIR),
+        "output_dir": str(output_dir),
+        "base_lora_checkpoint": str(base_lora_checkpoint) if base_lora_checkpoint is not None else None,
         "max_length": MAX_LENGTH,
         "learning_rate": LEARNING_RATE,
         "num_train_epochs": NUM_TRAIN_EPOCHS,
@@ -271,7 +314,7 @@ def write_run_config(dataset_path: Path, train_size: int, eval_size: int) -> Non
         "lora_alpha": LORA_ALPHA,
         "lora_dropout": LORA_DROPOUT,
     }
-    (OUTPUT_DIR / "run_config.json").write_text(
+    (output_dir / "run_config.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

@@ -17,8 +17,8 @@ TEMPERATURE = 0.8
 TOP_P = 0.9
 DO_SAMPLE = True
 DEFAULT_SYSTEM_PROMPT = (
-    "Eres un asistente virtual de Canarias. "
-    "Respondes usando el léxico, la sintaxis y las expresiones típicas del habla canaria."
+    "You are a virtual assistant from the Canary Islands. "
+    "You reply using the vocabulary, syntax, and natural phrasing of Canary Islands Spanish."
 )
 MAX_HISTORY_MESSAGES = 8
 
@@ -27,20 +27,20 @@ def main() -> None:
     checkpoint_dir = CHECKPOINT_DIR.resolve()
     if not checkpoint_dir.exists():
         raise FileNotFoundError(
-            "No encontré el checkpoint del modelo conversacional.\n"
-            f"Ruta esperada: {checkpoint_dir}\n"
-            "Entrena primero con siani/post_training/conversations/train.py."
+            "Could not find the conversational model checkpoint.\n"
+            f"Expected path: {checkpoint_dir}\n"
+            "Train it first with siani/post_training/conversations/train.py."
         )
 
-    print(f"[1/4] Resolviendo checkpoint: {checkpoint_dir}")
+    print(f"[1/4] Resolving checkpoint: {checkpoint_dir}")
     base_model_name = resolve_base_model_name(checkpoint_dir)
 
-    print(f"[2/4] Cargando tokenizer desde: {checkpoint_dir}")
+    print(f"[2/4] Loading tokenizer from: {checkpoint_dir}")
     tokenizer = AutoTokenizer.from_pretrained(str(checkpoint_dir), use_fast=True)
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"[3/4] Cargando modelo base: {base_model_name}")
+    print(f"[3/4] Loading base model: {base_model_name}")
     model = AutoModelForCausalLM.from_pretrained(
         base_model_name,
         dtype=resolve_torch_dtype(TORCH_DTYPE),
@@ -48,11 +48,11 @@ def main() -> None:
     )
 
     if is_lora_checkpoint(checkpoint_dir):
-        print(f"       Aplicando adaptador LoRA desde: {checkpoint_dir}")
+        print(f"       Applying LoRA adapter from: {checkpoint_dir}")
         model = PeftModel.from_pretrained(model, str(checkpoint_dir))
 
     model.eval()
-    print("[4/4] Listo. Escribe un prompt. Sal con 'exit' o 'quit'.")
+    print("[4/4] Ready. Type a prompt. Exit with 'exit' or 'quit'.")
     conversation_history: list[dict[str, str]] = []
 
     while True:
@@ -68,7 +68,7 @@ def main() -> None:
             break
 
         output = generate_text(model, tokenizer, prompt, conversation_history)
-        print("\nSalida:\n")
+        print("\nOutput:\n")
         print(output)
         conversation_history.extend(
             [
