@@ -13,7 +13,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CHECKPOINT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_style_lora"
+CHECKPOINT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_posttrain_style_rag_lora"
 DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
 KNOWLEDGE_DIR_CANDIDATES = (

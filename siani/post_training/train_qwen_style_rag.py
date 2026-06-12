@@ -28,9 +28,9 @@ from siani.post_training.test_qwen_style_rag import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_style_rag_lora"
+OUTPUT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_posttrain_style_rag_lora"
 BASE_STYLE_CHECKPOINT = REPO_ROOT / "outputs" / "qwen_canarian_style_lora"
-AUGMENTED_DATASET_PATH = REPO_ROOT / "outputs" / "canary_style_rag_augmented.jsonl"
+AUGMENTED_DATASET_PATH = REPO_ROOT / "outputs" / "canary_style_posttrain_rag_augmented.jsonl"
 
 MODEL_NAME_OR_PATH = "Qwen/Qwen2.5-7B-Instruct"
 SEED = 42
