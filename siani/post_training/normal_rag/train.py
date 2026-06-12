@@ -16,7 +16,7 @@ from siani.post_training.normal_rag.test import (
     DEFAULT_SYSTEM_PROMPT,
     MAX_CONTEXT_CHARS,
     MAX_STYLE_EXAMPLES,
-    STYLE_DATASET_PATH,
+    ORIGINAL_DATASET_PATH,
     TOP_K,
     build_or_refresh_index,
     detect_prompt_intent,
@@ -97,7 +97,7 @@ def main() -> None:
     print("[1/7] Inicializando entrenamiento estilo+RAG...")
     set_seed(SEED)
 
-    style_dataset_path = resolve_style_dataset_path()
+    original_dataset_path = resolve_original_dataset_path()
     knowledge_dirs = resolve_knowledge_dirs()
     if not knowledge_dirs:
         raise FileNotFoundError("No encontré carpetas de conocimiento para academia_canaria/canariwiki/gevic.")
@@ -106,10 +106,15 @@ def main() -> None:
     print(f"[2/7] Indexando conocimiento para RAG desde {len(knowledge_dirs)} carpetas...")
     conn = build_or_refresh_index(knowledge_dirs)
 
-    print(f"[3/7] Construyendo dataset aumentado desde: {style_dataset_path}")
-    train_dataset, eval_dataset, dataset_paths = load_and_augment_datasets(conn, style_dataset_path, style_examples)
+    print(f"[3/7] Construyendo dataset RAG desde dataset original: {original_dataset_path}")
+    train_dataset, eval_dataset, original_dataset_for_run_config = load_and_augment_datasets(
+        conn,
+        original_dataset_path,
+        style_examples,
+    )
     print(f"       train={len(train_dataset)} eval={len(eval_dataset)}")
-    print(f"       dataset aumentado={AUGMENTED_DATASET_PATH}")
+    print(f"       dataset original={original_dataset_path}")
+    print(f"       dataset rag generado={AUGMENTED_DATASET_PATH}")
     has_eval = len(eval_dataset) > 0
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_OR_PATH, use_fast=True)
@@ -166,7 +171,7 @@ def main() -> None:
         processing_class=tokenizer,
     )
 
-    write_run_config(dataset_paths, len(train_dataset), len(eval_dataset))
+    write_run_config(original_dataset_for_run_config, len(train_dataset), len(eval_dataset))
     print("[7/7] Empezando train()...")
     trainer.train()
     trainer.save_model()
@@ -175,22 +180,22 @@ def main() -> None:
     print(f"Entrenamiento terminado. Modelo guardado en: {OUTPUT_DIR}")
 
 
-def resolve_style_dataset_path() -> Path:
-    if STYLE_DATASET_PATH.exists():
-        return STYLE_DATASET_PATH.resolve()
-    raise FileNotFoundError(f"No encontré canary_style.jsonl en: {STYLE_DATASET_PATH}")
+def resolve_original_dataset_path() -> Path:
+    if ORIGINAL_DATASET_PATH.exists():
+        return ORIGINAL_DATASET_PATH.resolve()
+    raise FileNotFoundError(f"No encontré el dataset original en: {ORIGINAL_DATASET_PATH}")
 
 
 def load_and_augment_datasets(
     conn: sqlite3.Connection,
-    style_dataset_path: Path,
+    original_dataset_path: Path,
     style_examples: list[str],
 ) -> tuple[MessageDataset, MessageDataset, list[Path]]:
     train_rows: list[MessageExample] = []
     eval_rows: list[MessageExample] = []
     written_rows: list[dict[str, Any]] = []
 
-    with style_dataset_path.open("r", encoding="utf-8", errors="ignore") as handle:
+    with original_dataset_path.open("r", encoding="utf-8", errors="ignore") as handle:
         for line_number, line in enumerate(handle, start=1):
             line = line.strip()
             if not line:
@@ -200,7 +205,7 @@ def load_and_augment_datasets(
             if not is_valid_messages(messages):
                 continue
 
-            example_id = str(raw.get("id", f"{style_dataset_path.stem}:{line_number}"))
+            example_id = str(raw.get("id", f"{original_dataset_path.stem}:{line_number}"))
             split = raw.get("metadata", {}).get("split") if isinstance(raw.get("metadata"), dict) else None
             split = split or assign_split(example_id)
             augmented_messages = augment_messages_with_rag(conn, messages, style_examples)
@@ -228,7 +233,7 @@ def load_and_augment_datasets(
             )
 
     write_augmented_dataset(written_rows)
-    return MessageDataset(train_rows), MessageDataset(eval_rows), [style_dataset_path, AUGMENTED_DATASET_PATH]
+    return MessageDataset(train_rows), MessageDataset(eval_rows), [original_dataset_path, AUGMENTED_DATASET_PATH]
 
 
 def augment_messages_with_rag(

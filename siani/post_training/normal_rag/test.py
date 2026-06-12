@@ -20,7 +20,7 @@ DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 KNOWLEDGE_ROOT = REPO_ROOT / "siani" / "data"
 TARGET_SOURCES = ("academia_canaria", "canariwiki", "gevic")
 RAG_DB_PATH = REPO_ROOT / "outputs" / "qwen_style_rag.sqlite3"
-STYLE_DATASET_PATH = REPO_ROOT / "siani" / "data" / "post" / "canary_style.jsonl"
+ORIGINAL_DATASET_PATH = REPO_ROOT / "siani" / "data" / "post" / "canary_style.jsonl"
 
 TORCH_DTYPE = "bfloat16"
 MAX_NEW_TOKENS = 384
@@ -484,10 +484,10 @@ def normalize_text(text: str) -> str:
 
 
 def load_style_examples() -> list[str]:
-    if not STYLE_DATASET_PATH.exists():
+    if not ORIGINAL_DATASET_PATH.exists():
         return []
     examples: list[str] = []
-    with STYLE_DATASET_PATH.open("r", encoding="utf-8", errors="ignore") as handle:
+    with ORIGINAL_DATASET_PATH.open("r", encoding="utf-8", errors="ignore") as handle:
         for line in handle:
             line = line.strip()
             if not line:
