@@ -13,7 +13,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingA
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DATASET_PATH = REPO_ROOT / "siani" / "data" / "post" / "canary_style_converation.jsonl"
+DATASET_PATH = REPO_ROOT / "siani" / "data" / "post" / "canary_style_conversation.jsonl"
 OUTPUT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_conversations_lora"
 
 MODEL_NAME_OR_PATH = "Qwen/Qwen2.5-7B-Instruct"
