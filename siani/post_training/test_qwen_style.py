@@ -20,6 +20,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "Eres un asistente virtual de Canarias. "
     "Respondes usando el léxico, la sintaxis y las expresiones típicas del habla canaria."
 )
+MAX_HISTORY_MESSAGES = 8
 
 
 def main() -> None:
@@ -48,6 +49,7 @@ def main() -> None:
 
     model.eval()
     print("[4/4] Listo. Escribe un prompt. Sal con 'exit' o 'quit'.")
+    conversation_history: list[dict[str, str]] = []
 
     while True:
         try:
@@ -61,16 +63,24 @@ def main() -> None:
         if prompt.lower() in {"exit", "quit"}:
             break
 
-        output = generate_text(model, tokenizer, prompt)
+        output = generate_text(model, tokenizer, prompt, conversation_history)
         print("\nSalida:\n")
         print(output)
+        conversation_history.extend(
+            [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": output},
+            ]
+        )
+        if len(conversation_history) > MAX_HISTORY_MESSAGES:
+            conversation_history[:] = conversation_history[-MAX_HISTORY_MESSAGES:]
 
 
-def generate_text(model, tokenizer, prompt: str) -> str:
-    messages = [
-        {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
-        {"role": "user", "content": prompt},
-    ]
+def generate_text(model, tokenizer, prompt: str, conversation_history: list[dict[str, str]]) -> str:
+    messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT}]
+    if conversation_history:
+        messages.extend(conversation_history[-MAX_HISTORY_MESSAGES:])
+    messages.append({"role": "user", "content": prompt})
     if hasattr(tokenizer, "apply_chat_template"):
         rendered_prompt = tokenizer.apply_chat_template(
             messages,

@@ -34,6 +34,7 @@ CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 200
 MAX_CONTEXT_CHARS = 1800
 MAX_STYLE_EXAMPLES = 2
+MAX_HISTORY_MESSAGES = 8
 
 DEFAULT_SYSTEM_PROMPT = (
     "Eres un asistente virtual de Canarias. "
@@ -81,6 +82,7 @@ def main() -> None:
 
     model.eval()
     print("[5/5] Listo. Escribe una pregunta. Sal con 'exit' o 'quit'.")
+    conversation_history: list[dict[str, str]] = []
 
     while True:
         try:
@@ -94,10 +96,11 @@ def main() -> None:
         if prompt.lower() in {"exit", "quit"}:
             break
 
-        use_rag = should_use_rag(prompt)
+        effective_prompt = build_effective_prompt(prompt, conversation_history)
+        use_rag = should_use_rag(effective_prompt)
         retrieved: list[dict[str, str]] = []
         if use_rag:
-            retrieved = search_chunks(conn, prompt, TOP_K)
+            retrieved = search_chunks(conn, effective_prompt, TOP_K)
             print("\nContexto recuperado:\n")
             if not retrieved:
                 print("(sin resultados)")
@@ -110,9 +113,17 @@ def main() -> None:
             print("\nContexto recuperado:\n")
             print("(RAG desactivado para este prompt)")
 
-        output = generate_text(model, tokenizer, prompt, retrieved, style_examples)
+        output = generate_text(model, tokenizer, prompt, effective_prompt, retrieved, style_examples, conversation_history)
         print("\nSalida:\n")
         print(output)
+        conversation_history.extend(
+            [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": output},
+            ]
+        )
+        if len(conversation_history) > MAX_HISTORY_MESSAGES:
+            conversation_history[:] = conversation_history[-MAX_HISTORY_MESSAGES:]
 
 
 def resolve_knowledge_dirs() -> list[Path]:
@@ -356,10 +367,12 @@ def generate_text(
     model,
     tokenizer,
     prompt: str,
+    effective_prompt: str,
     retrieved: list[dict[str, str]],
     style_examples: list[str],
+    conversation_history: list[dict[str, str]],
 ) -> str:
-    detected_intent = detect_prompt_intent(prompt)
+    detected_intent = detect_prompt_intent(effective_prompt)
     context_blocks = []
     context_budget = 0
     for index, item in enumerate(retrieved, start=1):
@@ -374,6 +387,7 @@ def generate_text(
     user_prompt = (
         f"Tipo de intención detectada: {detected_intent}\n\n"
         f"Pregunta del usuario:\n{prompt}\n\n"
+        f"Consulta resuelta para memoria y recuperación:\n{effective_prompt}\n\n"
         f"Mini ejemplos de estilo canario que debes conservar:\n{style_block}\n\n"
         f"Contexto recuperado:\n{context}\n\n"
         "Instrucciones:\n"
@@ -386,10 +400,10 @@ def generate_text(
         "- Si el contexto no basta, dilo con naturalidad y no inventes datos concretos.\n"
         "- Si la pregunta no necesita conocimiento externo, responde con tu estilo normal y listo."
     )
-    messages = [
-        {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ]
+    messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT}]
+    if conversation_history:
+        messages.extend(conversation_history[-MAX_HISTORY_MESSAGES:])
+    messages.append({"role": "user", "content": user_prompt})
     if hasattr(tokenizer, "apply_chat_template"):
         rendered_prompt = tokenizer.apply_chat_template(
             messages,
@@ -496,6 +510,55 @@ def load_style_examples() -> list[str]:
                     if len(examples) >= MAX_STYLE_EXAMPLES:
                         return examples
     return []
+
+
+def build_effective_prompt(prompt: str, conversation_history: list[dict[str, str]]) -> str:
+    normalized = normalize_text(prompt)
+    if not normalized:
+        return prompt
+
+    if not is_follow_up_prompt(normalized):
+        return prompt
+
+    last_user_topic = get_last_user_topic(conversation_history)
+    if not last_user_topic:
+        return prompt
+
+    return f"{last_user_topic}\nSeguimiento del usuario: {prompt}"
+
+
+def is_follow_up_prompt(prompt: str) -> bool:
+    normalized = normalize_text(prompt).lower()
+    follow_up_markers = (
+        "más",
+        "mas",
+        "y eso",
+        "y tal",
+        "porfa",
+        "explícame mejor",
+        "explicame mejor",
+        "desarrolla",
+        "sigue",
+        "continúa",
+        "continua",
+        "venga",
+        "dale",
+        "y después",
+        "y despues",
+    )
+    if len(normalized) <= 20:
+        return True
+    return any(marker in normalized for marker in follow_up_markers)
+
+
+def get_last_user_topic(conversation_history: list[dict[str, str]]) -> str | None:
+    for message in reversed(conversation_history):
+        if message.get("role") != "user":
+            continue
+        content = normalize_text(str(message.get("content", "")))
+        if content:
+            return content
+    return None
 
 
 def should_use_rag(prompt: str) -> bool:
