@@ -30,7 +30,7 @@ from siani.post_training.conversations_rag.test import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OUTPUT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_conversations_rag_lora"
 BASE_STYLE_CHECKPOINT = REPO_ROOT / "outputs" / "qwen_canarian_conversations_lora"
-AUGMENTED_DATASET_PATH = REPO_ROOT / "outputs" / "canary_style_converation_rag_augmented.jsonl"
+AUGMENTED_DATASET_PATH = REPO_ROOT / "outputs" / "canary_style_conversation_rag_augmented.jsonl"
 
 MODEL_NAME_OR_PATH = "Qwen/Qwen2.5-7B-Instruct"
 SEED = 42
