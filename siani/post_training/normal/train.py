@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, set_seed
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DATASET_DIR = REPO_ROOT / "siani" / "data" / "post"
 OUTPUT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_style_lora"
 

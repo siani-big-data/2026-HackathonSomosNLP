@@ -203,7 +203,7 @@ class GevicArticleParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = dict(attrs)
 
-        if tag in {"script", "style"}:
+        if tag in {"script", "normal"}:
             self.in_script_or_style = True
             return
 
@@ -232,7 +232,7 @@ class GevicArticleParser(HTMLParser):
                 self.image_urls.append(urljoin(self.article_url, src))
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style"}:
+        if tag in {"script", "normal"}:
             self.in_script_or_style = False
             return
 

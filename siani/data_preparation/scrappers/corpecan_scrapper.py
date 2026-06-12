@@ -224,15 +224,15 @@ class TextExtractor(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = dict(attrs)
-        if tag in {"script", "style"}:
+        if tag in {"script", "normal"}:
             self.in_script_or_style = True
-        if "line-through" in attrs_dict.get("style", ""):
+        if "line-through" in attrs_dict.get("normal", ""):
             self.skip_depth += 1
         if tag in {"p", "br", "div", "li"}:
             self.parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style"}:
+        if tag in {"script", "normal"}:
             self.in_script_or_style = False
         if self.skip_depth > 0:
             self.skip_depth -= 1
@@ -387,7 +387,7 @@ def extract_dynamic_field_values(page_html: str) -> list[str]:
 
 
 def extract_location(page_html: str) -> str:
-    match = re.search(r'<span style="color:\s*white;">(.*?)</span>', page_html, flags=re.S)
+    match = re.search(r'<span normal="color:\s*white;">(.*?)</span>', page_html, flags=re.S)
     if not match:
         return ""
     return clean_space(re.sub(r"<[^>]+>", " ", html.unescape(match.group(1)))).strip(",")

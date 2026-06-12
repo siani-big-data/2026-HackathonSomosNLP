@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import csv
-import re
-import json
-import sqlite3
 import hashlib
+import json
+import re
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +13,7 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 CHECKPOINT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_posttrain_style_rag_lora"
 DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
@@ -600,8 +600,6 @@ def should_use_rag(prompt: str) -> bool:
         "consulta",
     )
 
-    # Si huele a pregunta factual, histórica, cultural o patrimonial,
-    # activamos RAG aunque empiece por "cuéntame" o "háblame".
     if "?" in normalized and any(marker in normalized for marker in factual_markers):
         return True
     if any(normalized.startswith(prefix) for prefix in ("qué", "que", "quién", "quien", "dónde", "donde", "cuándo", "cuando")):
@@ -612,7 +610,6 @@ def should_use_rag(prompt: str) -> bool:
     if normalized.startswith(("cuéntame", "cuentame", "háblame", "hablame", "dime", "explícame", "explicame")) and len(normalized) > 24:
         return True
 
-    # Charla, opinión o prompts creativos: mejor sin RAG.
     skip_markers = (
         "imagina",
         "escribe",

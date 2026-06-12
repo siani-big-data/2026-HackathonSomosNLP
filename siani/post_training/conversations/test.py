@@ -8,8 +8,8 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CHECKPOINT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_style_lora"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CHECKPOINT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_conversations_lora"
 DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 TORCH_DTYPE = "bfloat16"
 MAX_NEW_TOKENS = 256

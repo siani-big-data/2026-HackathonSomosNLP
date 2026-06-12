@@ -12,7 +12,7 @@ from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 from torch.utils.data import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, set_seed
 
-from siani.post_training.test_qwen_style_rag import (
+from siani.post_training.conversations_rag.test import (
     DEFAULT_SYSTEM_PROMPT,
     MAX_CONTEXT_CHARS,
     MAX_STYLE_EXAMPLES,
@@ -27,10 +27,10 @@ from siani.post_training.test_qwen_style_rag import (
 )
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_posttrain_style_rag_lora"
-BASE_STYLE_CHECKPOINT = REPO_ROOT / "outputs" / "qwen_canarian_style_lora"
-AUGMENTED_DATASET_PATH = REPO_ROOT / "outputs" / "canary_style_posttrain_rag_augmented.jsonl"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+OUTPUT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_conversations_rag_lora"
+BASE_STYLE_CHECKPOINT = REPO_ROOT / "outputs" / "qwen_canarian_conversations_lora"
+AUGMENTED_DATASET_PATH = REPO_ROOT / "outputs" / "canary_style_converation_rag_augmented.jsonl"
 
 MODEL_NAME_OR_PATH = "Qwen/Qwen2.5-7B-Instruct"
 SEED = 42
@@ -107,7 +107,7 @@ def main() -> None:
     conn = build_or_refresh_index(knowledge_dirs)
 
     print(f"[3/7] Construyendo dataset aumentado desde: {style_dataset_path}")
-    train_dataset, eval_dataset, dataset_paths = load_and_augment_datasets(conn, style_dataset_path, style_examples)
+    train_dataset, eval_dataset, dataset_path = load_and_augment_datasets(conn, style_dataset_path, style_examples)
     print(f"       train={len(train_dataset)} eval={len(eval_dataset)}")
     print(f"       dataset aumentado={AUGMENTED_DATASET_PATH}")
 
@@ -165,7 +165,7 @@ def main() -> None:
         processing_class=tokenizer,
     )
 
-    write_run_config(dataset_paths, len(train_dataset), len(eval_dataset))
+    write_run_config(dataset_path, len(train_dataset), len(eval_dataset))
     print("[7/7] Empezando train()...")
     trainer.train()
     trainer.save_model()
@@ -177,14 +177,14 @@ def main() -> None:
 def resolve_style_dataset_path() -> Path:
     if STYLE_DATASET_PATH.exists():
         return STYLE_DATASET_PATH.resolve()
-    raise FileNotFoundError(f"No encontré canary_style.jsonl en: {STYLE_DATASET_PATH}")
+    raise FileNotFoundError(f"No encontré canary_style_converation.jsonl en: {STYLE_DATASET_PATH}")
 
 
 def load_and_augment_datasets(
     conn: sqlite3.Connection,
     style_dataset_path: Path,
     style_examples: list[str],
-) -> tuple[MessageDataset, MessageDataset, list[Path]]:
+) -> tuple[MessageDataset, MessageDataset, Path]:
     train_rows: list[MessageExample] = []
     eval_rows: list[MessageExample] = []
     written_rows: list[dict[str, Any]] = []
@@ -227,7 +227,7 @@ def load_and_augment_datasets(
             )
 
     write_augmented_dataset(written_rows)
-    return MessageDataset(train_rows), MessageDataset(eval_rows), [style_dataset_path, AUGMENTED_DATASET_PATH]
+    return MessageDataset(train_rows), MessageDataset(eval_rows), style_dataset_path
 
 
 def augment_messages_with_rag(
@@ -376,11 +376,11 @@ def prepare_model_for_training(model: Any) -> None:
         model.enable_input_require_grads()
 
 
-def write_run_config(dataset_paths: list[Path], train_size: int, eval_size: int) -> None:
+def write_run_config(dataset_path: Path, train_size: int, eval_size: int) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
         "model_name_or_path": MODEL_NAME_OR_PATH,
-        "dataset_paths": [str(path) for path in dataset_paths],
+        "dataset_path": str(dataset_path),
         "output_dir": str(OUTPUT_DIR),
         "base_style_checkpoint": str(BASE_STYLE_CHECKPOINT),
         "augmented_dataset_path": str(AUGMENTED_DATASET_PATH),
