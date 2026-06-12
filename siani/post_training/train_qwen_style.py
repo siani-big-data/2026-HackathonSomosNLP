@@ -13,15 +13,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingA
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DATASET_DIR_CANDIDATES = (
-    REPO_ROOT / "data" / "post",
-    REPO_ROOT / "siani" / "data" / "post",
-)
-DATASET_CANDIDATES = (
-    REPO_ROOT / "siani" / "post_training" / "message.jsonl",
-    REPO_ROOT / "siani" / "post_training" / "message.txt",
-    Path("/home/jhernandezgalvez/PycharmProjects/2026-HackathonSomosNLP/siani/data/canary_style.jsonl"),
-)
+DATASET_DIR = REPO_ROOT / "siani" / "data" / "post"
 OUTPUT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_style_lora"
 
 MODEL_NAME_OR_PATH = "Qwen/Qwen2.5-7B-Instruct"
@@ -160,35 +152,12 @@ def main() -> None:
 
 
 def resolve_dataset_paths() -> list[Path]:
-    directory_paths: list[Path] = []
-    for directory in DATASET_DIR_CANDIDATES:
-        if directory.exists() and directory.is_dir():
-            directory_paths.extend(sorted(path.resolve() for path in directory.glob("*.jsonl")))
-    if directory_paths:
-        return deduplicate_paths(directory_paths)
-
-    for candidate in DATASET_CANDIDATES:
-        if candidate.exists():
-            return [candidate.resolve()]
-    rendered_dirs = "\n".join(f"- {path}" for path in DATASET_DIR_CANDIDATES)
-    rendered_files = "\n".join(f"- {path}" for path in DATASET_CANDIDATES)
-    raise FileNotFoundError(
-        "No encontré datasets de estilo.\n"
-        f"Directorios mirados:\n{rendered_dirs}\n"
-        f"Ficheros mirados:\n{rendered_files}"
-    )
-
-
-def deduplicate_paths(paths: list[Path]) -> list[Path]:
-    seen: set[str] = set()
-    unique: list[Path] = []
-    for path in paths:
-        key = str(path)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(path)
-    return unique
+    if not DATASET_DIR.exists() or not DATASET_DIR.is_dir():
+        raise FileNotFoundError(f"No encontré el directorio de datasets: {DATASET_DIR}")
+    paths = sorted(path.resolve() for path in DATASET_DIR.glob("*.jsonl"))
+    if not paths:
+        raise FileNotFoundError(f"No encontré ningún .jsonl dentro de: {DATASET_DIR}")
+    return paths
 
 
 def load_datasets(paths: list[Path]) -> tuple[MessageDataset, MessageDataset]:

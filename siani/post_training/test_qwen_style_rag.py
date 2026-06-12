@@ -17,17 +17,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKPOINT_DIR = REPO_ROOT / "outputs" / "qwen_canarian_posttrain_style_rag_lora"
 DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
-KNOWLEDGE_DIR_CANDIDATES = (
-    REPO_ROOT / "data",
-    REPO_ROOT / "siani" / "data",
-)
+KNOWLEDGE_ROOT = REPO_ROOT / "siani" / "data"
 TARGET_SOURCES = ("academia_canaria", "canariwiki", "gevic")
 RAG_DB_PATH = REPO_ROOT / "outputs" / "qwen_style_rag.sqlite3"
-STYLE_DATASET_CANDIDATES = (
-    REPO_ROOT / "data" / "post" / "canary_style.jsonl",
-    REPO_ROOT / "siani" / "data" / "post" / "canary_style.jsonl",
-    Path("/Users/josejuan/Desktop/canary_style.jsonl"),
-)
+STYLE_DATASET_PATH = REPO_ROOT / "siani" / "data" / "post" / "canary_style.jsonl"
 
 TORCH_DTYPE = "bfloat16"
 MAX_NEW_TOKENS = 384
@@ -62,8 +55,7 @@ def main() -> None:
 
     knowledge_dirs = resolve_knowledge_dirs()
     if not knowledge_dirs:
-        rendered = "\n".join(str(path) for path in KNOWLEDGE_DIR_CANDIDATES)
-        raise FileNotFoundError(f"No encontré carpetas de conocimiento. Miré en:\n{rendered}")
+        raise FileNotFoundError(f"No encontré carpetas de conocimiento dentro de: {KNOWLEDGE_ROOT}")
     style_examples = load_style_examples()
 
     print(f"[1/5] Construyendo o abriendo índice RAG: {RAG_DB_PATH}")
@@ -125,11 +117,10 @@ def main() -> None:
 
 def resolve_knowledge_dirs() -> list[Path]:
     dirs: list[Path] = []
-    for root in KNOWLEDGE_DIR_CANDIDATES:
-        for source in TARGET_SOURCES:
-            candidate = root / source
-            if candidate.exists() and candidate.is_dir():
-                dirs.append(candidate.resolve())
+    for source in TARGET_SOURCES:
+        candidate = KNOWLEDGE_ROOT / source
+        if candidate.exists() and candidate.is_dir():
+            dirs.append(candidate.resolve())
     return dirs
 
 
@@ -479,60 +470,37 @@ def normalize_text(text: str) -> str:
 
 
 def load_style_examples() -> list[str]:
-    for path in STYLE_DATASET_CANDIDATES:
-        if not path.exists():
-            continue
-        examples: list[str] = []
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    raw = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                messages = raw.get("messages")
-                if not isinstance(messages, list):
-                    continue
-                assistant_messages = [
-                    normalize_text(str(message.get("content", "")))
-                    for message in messages
-                    if isinstance(message, dict) and message.get("role") == "assistant"
-                ]
-                for content in assistant_messages:
-                    if content:
-                        examples.append(content[:220])
-                        if len(examples) >= MAX_STYLE_EXAMPLES:
-                            return examples
-        if examples:
-            return examples
+    if not STYLE_DATASET_PATH.exists():
+        return []
+    examples: list[str] = []
+    with STYLE_DATASET_PATH.open("r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                raw = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            messages = raw.get("messages")
+            if not isinstance(messages, list):
+                continue
+            assistant_messages = [
+                normalize_text(str(message.get("content", "")))
+                for message in messages
+                if isinstance(message, dict) and message.get("role") == "assistant"
+            ]
+            for content in assistant_messages:
+                if content:
+                    examples.append(content[:220])
+                    if len(examples) >= MAX_STYLE_EXAMPLES:
+                        return examples
     return []
 
 
 def should_use_rag(prompt: str) -> bool:
     normalized = normalize_text(prompt).lower()
     if not normalized:
-        return False
-
-    # Charla, opinión o prompts creativos: mejor sin RAG.
-    skip_markers = (
-        "háblame de",
-        "cuéntame",
-        "imagina",
-        "escribe",
-        "redacta",
-        "inventa",
-        "dime algo",
-        "salúdame",
-        "hazme un",
-        "opina",
-        "qué te parece",
-        "tu comida favorita",
-        "tu película favorita",
-        "cómo sería",
-    )
-    if any(marker in normalized for marker in skip_markers):
         return False
 
     factual_markers = (
@@ -553,18 +521,54 @@ def should_use_rag(prompt: str) -> bool:
         "definicion",
         "etimología",
         "etimologia",
+        "historia",
+        "cultura",
+        "guanche",
+        "aborigen",
+        "aborígen",
+        "bosques",
+        "tabaibas",
+        "flora",
+        "fauna",
         "academia canaria",
         "canariwiki",
         "gevic",
         "patrimonio",
         "consulta",
     )
+
+    # Si huele a pregunta factual, histórica, cultural o patrimonial,
+    # activamos RAG aunque empiece por "cuéntame" o "háblame".
     if "?" in normalized and any(marker in normalized for marker in factual_markers):
         return True
     if any(normalized.startswith(prefix) for prefix in ("qué", "que", "quién", "quien", "dónde", "donde", "cuándo", "cuando")):
         return True
     if any(marker in normalized for marker in factual_markers):
         return True
+
+    if normalized.startswith(("cuéntame", "cuentame", "háblame", "hablame", "dime", "explícame", "explicame")) and len(normalized) > 24:
+        return True
+
+    # Charla, opinión o prompts creativos: mejor sin RAG.
+    skip_markers = (
+        "imagina",
+        "escribe",
+        "redacta",
+        "inventa",
+        "dime algo",
+        "salúdame",
+        "hazme un chiste",
+        "opina",
+        "qué te parece",
+        "tu comida favorita",
+        "tu película favorita",
+        "cómo sería",
+    )
+    if any(marker in normalized for marker in skip_markers):
+        return False
+
+    if normalized in {"hola", "holaa", "buenas", "buenass", "ey", "hey", "hello"}:
+        return False
     return False
 
 

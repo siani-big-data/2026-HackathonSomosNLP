@@ -16,7 +16,7 @@ from siani.post_training.test_qwen_style_rag import (
     DEFAULT_SYSTEM_PROMPT,
     MAX_CONTEXT_CHARS,
     MAX_STYLE_EXAMPLES,
-    STYLE_DATASET_CANDIDATES,
+    STYLE_DATASET_PATH,
     TOP_K,
     build_or_refresh_index,
     detect_prompt_intent,
@@ -175,11 +175,9 @@ def main() -> None:
 
 
 def resolve_style_dataset_path() -> Path:
-    for candidate in STYLE_DATASET_CANDIDATES:
-        if candidate.exists():
-            return candidate.resolve()
-    rendered = "\n".join(f"- {path}" for path in STYLE_DATASET_CANDIDATES)
-    raise FileNotFoundError(f"No encontré canary_style.jsonl. Miré en:\n{rendered}")
+    if STYLE_DATASET_PATH.exists():
+        return STYLE_DATASET_PATH.resolve()
+    raise FileNotFoundError(f"No encontré canary_style.jsonl en: {STYLE_DATASET_PATH}")
 
 
 def load_and_augment_datasets(
