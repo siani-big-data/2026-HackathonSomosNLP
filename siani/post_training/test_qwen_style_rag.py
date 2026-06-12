@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 import json
 import sqlite3
 import hashlib
@@ -346,7 +347,10 @@ def search_chunks(conn: sqlite3.Connection, query: str, top_k: int) -> list[dict
 
 
 def fts_query(text: str) -> str:
-    tokens = [token for token in normalize_text(text).split() if len(token) > 2]
+    tokens = []
+    for token in re.findall(r"[0-9A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+", normalize_text(text)):
+        if len(token) > 2:
+            tokens.append(token)
     if not tokens:
         return "canarias"
     return " OR ".join(tokens[:8])
