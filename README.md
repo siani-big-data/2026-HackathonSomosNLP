@@ -121,7 +121,7 @@ Another valid example, closer to a real multi-turn conversation:
   ],
   "metadata": {
     "split": "train",
-    "source": "canary_style_converation"
+    "source": "canary_style_conversation"
   }
 }
 ```

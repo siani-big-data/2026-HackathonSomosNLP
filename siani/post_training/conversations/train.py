@@ -152,7 +152,11 @@ def main() -> None:
 
 def resolve_dataset_path() -> Path:
     if not DATASET_PATH.exists():
-        raise FileNotFoundError(f"No encontré el dataset: {DATASET_PATH}")
+        raise FileNotFoundError(
+            "No encontré el dataset de conversaciones.\n"
+            f"Ruta esperada: {DATASET_PATH}\n"
+            "Asegúrate de que exista el fichero canary_style_conversation.jsonl dentro de siani/data/post/."
+        )
     return DATASET_PATH.resolve()
 
 
@@ -181,6 +185,12 @@ def load_dataset(path: Path) -> tuple[MessageDataset, MessageDataset]:
                 train_rows.append(example)
             elif split == "validation":
                 eval_rows.append(example)
+
+    if not train_rows and not eval_rows:
+        raise ValueError(
+            "No encontré ejemplos válidos en el dataset de conversaciones.\n"
+            f"Revisa el formato de messages dentro de: {path}"
+        )
 
     return MessageDataset(train_rows), MessageDataset(eval_rows)
 

@@ -20,7 +20,7 @@ DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 KNOWLEDGE_ROOT = REPO_ROOT / "siani" / "data"
 TARGET_SOURCES = ("academia_canaria", "canariwiki", "gevic")
 RAG_DB_PATH = REPO_ROOT / "outputs" / "qwen_conversations_rag.sqlite3"
-ORIGINAL_DATASET_PATH = REPO_ROOT / "siani" / "data" / "post" / "canary_style_converation.jsonl"
+ORIGINAL_DATASET_PATH = REPO_ROOT / "siani" / "data" / "post" / "canary_style_conversation.jsonl"
 
 TORCH_DTYPE = "bfloat16"
 MAX_NEW_TOKENS = 384
@@ -52,11 +52,19 @@ DEFAULT_SYSTEM_PROMPT = (
 def main() -> None:
     checkpoint_dir = CHECKPOINT_DIR.resolve()
     if not checkpoint_dir.exists():
-        raise FileNotFoundError(f"No encontré el checkpoint en: {checkpoint_dir}")
+        raise FileNotFoundError(
+            "No encontré el checkpoint del modelo conversations_rag.\n"
+            f"Ruta esperada: {checkpoint_dir}\n"
+            "Entrena primero con siani/post_training/conversations_rag/train.py."
+        )
 
     knowledge_dirs = resolve_knowledge_dirs()
     if not knowledge_dirs:
-        raise FileNotFoundError(f"No encontré carpetas de conocimiento dentro de: {KNOWLEDGE_ROOT}")
+        raise FileNotFoundError(
+            "No encontré carpetas de conocimiento para RAG.\n"
+            f"Raíz revisada: {KNOWLEDGE_ROOT}\n"
+            "Se esperan al menos estas carpetas: academia_canaria, canariwiki, gevic."
+        )
     style_examples = load_style_examples()
 
     print(f"[1/5] Construyendo o abriendo índice RAG: {RAG_DB_PATH}")

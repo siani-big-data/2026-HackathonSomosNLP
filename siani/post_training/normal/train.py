@@ -154,10 +154,16 @@ def main() -> None:
 
 def resolve_dataset_paths() -> list[Path]:
     if not DATASET_DIR.exists() or not DATASET_DIR.is_dir():
-        raise FileNotFoundError(f"No encontré el directorio de datasets: {DATASET_DIR}")
+        raise FileNotFoundError(
+            "No encontré el directorio de datasets normales.\n"
+            f"Ruta esperada: {DATASET_DIR}"
+        )
     paths = sorted(path.resolve() for path in DATASET_DIR.glob("*.jsonl"))
     if not paths:
-        raise FileNotFoundError(f"No encontré ningún .jsonl dentro de: {DATASET_DIR}")
+        raise FileNotFoundError(
+            "No encontré ningún .jsonl dentro del directorio de datasets normales.\n"
+            f"Ruta revisada: {DATASET_DIR}"
+        )
     return paths
 
 
@@ -187,6 +193,12 @@ def load_datasets(paths: list[Path]) -> tuple[MessageDataset, MessageDataset]:
                     train_rows.append(example)
                 elif split == "validation":
                     eval_rows.append(example)
+
+    if not train_rows and not eval_rows:
+        raise ValueError(
+            "No encontré ejemplos válidos en los datasets normales.\n"
+            f"Ficheros revisados: {', '.join(str(path) for path in paths)}"
+        )
 
     return MessageDataset(train_rows), MessageDataset(eval_rows)
 

@@ -26,7 +26,11 @@ MAX_HISTORY_MESSAGES = 8
 def main() -> None:
     checkpoint_dir = CHECKPOINT_DIR.resolve()
     if not checkpoint_dir.exists():
-        raise FileNotFoundError(f"No encontré el checkpoint en: {checkpoint_dir}")
+        raise FileNotFoundError(
+            "No encontré el checkpoint del modelo conversacional.\n"
+            f"Ruta esperada: {checkpoint_dir}\n"
+            "Entrena primero con siani/post_training/conversations/train.py."
+        )
 
     print(f"[1/4] Resolviendo checkpoint: {checkpoint_dir}")
     base_model_name = resolve_base_model_name(checkpoint_dir)

@@ -183,7 +183,11 @@ def main() -> None:
 def resolve_original_dataset_path() -> Path:
     if ORIGINAL_DATASET_PATH.exists():
         return ORIGINAL_DATASET_PATH.resolve()
-    raise FileNotFoundError(f"No encontré el dataset original en: {ORIGINAL_DATASET_PATH}")
+    raise FileNotFoundError(
+        "No encontré el dataset original para construir el dataset normal_rag.\n"
+        f"Ruta esperada: {ORIGINAL_DATASET_PATH}\n"
+        "Este script genera el dataset RAG automáticamente a partir de ese dataset original."
+    )
 
 
 def load_and_augment_datasets(
@@ -231,6 +235,12 @@ def load_and_augment_datasets(
                     },
                 }
             )
+
+    if not train_rows and not eval_rows:
+        raise ValueError(
+            "No pude construir ejemplos válidos para el entrenamiento normal_rag.\n"
+            f"Revisa el formato del dataset original: {original_dataset_path}"
+        )
 
     write_augmented_dataset(written_rows)
     return MessageDataset(train_rows), MessageDataset(eval_rows), [original_dataset_path, AUGMENTED_DATASET_PATH]

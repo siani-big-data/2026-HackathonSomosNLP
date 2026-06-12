@@ -52,11 +52,19 @@ DEFAULT_SYSTEM_PROMPT = (
 def main() -> None:
     checkpoint_dir = CHECKPOINT_DIR.resolve()
     if not checkpoint_dir.exists():
-        raise FileNotFoundError(f"No encontré el checkpoint en: {checkpoint_dir}")
+        raise FileNotFoundError(
+            "No encontré el checkpoint del modelo normal_rag.\n"
+            f"Ruta esperada: {checkpoint_dir}\n"
+            "Entrena primero con siani/post_training/normal_rag/train.py."
+        )
 
     knowledge_dirs = resolve_knowledge_dirs()
     if not knowledge_dirs:
-        raise FileNotFoundError(f"No encontré carpetas de conocimiento dentro de: {KNOWLEDGE_ROOT}")
+        raise FileNotFoundError(
+            "No encontré carpetas de conocimiento para RAG.\n"
+            f"Raíz revisada: {KNOWLEDGE_ROOT}\n"
+            "Se esperan al menos estas carpetas: academia_canaria, canariwiki, gevic."
+        )
     style_examples = load_style_examples()
 
     print(f"[1/5] Construyendo o abriendo índice RAG: {RAG_DB_PATH}")
