@@ -102,13 +102,14 @@ def main() -> None:
     print("[4/6] Leyendo conversaciones...")
     train_dataset, eval_dataset = load_dataset(dataset_path)
     print(f"       train={len(train_dataset)} eval={len(eval_dataset)}")
+    has_eval = len(eval_dataset) > 0
 
     training_args = TrainingArguments(
         output_dir=str(OUTPUT_DIR),
         overwrite_output_dir=False,
         do_train=True,
-        do_eval=len(eval_dataset) > 0,
-        eval_strategy="steps",
+        do_eval=has_eval,
+        eval_strategy="steps" if has_eval else "no",
         eval_steps=EVAL_STEPS,
         per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
         per_device_eval_batch_size=PER_DEVICE_EVAL_BATCH_SIZE,
@@ -136,7 +137,7 @@ def main() -> None:
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset if len(eval_dataset) > 0 else None,
+        eval_dataset=eval_dataset if has_eval else None,
         data_collator=MessageCollator(tokenizer, MAX_LENGTH),
         processing_class=tokenizer,
     )

@@ -110,6 +110,7 @@ def main() -> None:
     train_dataset, eval_dataset, dataset_paths = load_and_augment_datasets(conn, style_dataset_path, style_examples)
     print(f"       train={len(train_dataset)} eval={len(eval_dataset)}")
     print(f"       dataset aumentado={AUGMENTED_DATASET_PATH}")
+    has_eval = len(eval_dataset) > 0
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_OR_PATH, use_fast=True)
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
@@ -131,8 +132,8 @@ def main() -> None:
         output_dir=str(OUTPUT_DIR),
         overwrite_output_dir=False,
         do_train=True,
-        do_eval=len(eval_dataset) > 0,
-        eval_strategy="steps",
+        do_eval=has_eval,
+        eval_strategy="steps" if has_eval else "no",
         eval_steps=EVAL_STEPS,
         per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
         per_device_eval_batch_size=PER_DEVICE_EVAL_BATCH_SIZE,
@@ -160,7 +161,7 @@ def main() -> None:
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset if len(eval_dataset) > 0 else None,
+        eval_dataset=eval_dataset if has_eval else None,
         data_collator=MessageCollator(tokenizer, MAX_LENGTH),
         processing_class=tokenizer,
     )

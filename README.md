@@ -1,8 +1,10 @@
 <div align="center">
 
-# Onexe
+# ⬜🟦🟨 1xe ⬜🟦🟨
 
 ### Canary-style Spanish assistant with post-training and retrieval grounding
+
+**Made in the Canary Islands**
 
 [![Python 3.14+](https://img.shields.io/badge/Python-3.14%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch 2.8+](https://img.shields.io/badge/PyTorch-2.8%2B-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
@@ -13,7 +15,7 @@
 [![uv managed](https://img.shields.io/badge/uv-managed-222222?style=for-the-badge)](https://docs.astral.sh/uv/)
 [![Status prototype](https://img.shields.io/badge/status-research%20prototype-8B5CF6?style=for-the-badge)](#current-limitations)
 
-Onexe is a research prototype for building a Canary Islands Spanish assistant with a recognizable local voice, post-training over conversation datasets, and optional RAG over curated cultural sources such as Academia Canaria, Canariwiki, and GEVIC.
+1xe is a research prototype for building a Canary Islands Spanish assistant with a recognizable local voice, post-training over conversation datasets, and optional RAG over curated cultural sources such as Academia Canaria, Canariwiki, and GEVIC.
 
 </div>
 
@@ -46,7 +48,7 @@ siani/
 outputs/
 ```
 
-Note: the current repository layout still uses the `siani/` package path internally. `Onexe` is the project name, while `siani/...` is the existing code path in this repo.
+Note: the current repository layout still uses the `siani/` package path internally. `1xe` is the project name, while `siani/...` is the existing code path in this repo.
 
 ### Key directories
 
@@ -98,7 +100,7 @@ Another valid example, closer to a real multi-turn conversation:
   "messages": [
     {
       "role": "system",
-      "content": "You are Onexe, a virtual assistant from the Canary Islands. Keep a natural Canary tone, without caricature."
+      "content": "You are 1xe, a virtual assistant from the Canary Islands. Keep a natural Canary tone, without caricature."
     },
     {
       "role": "user",
