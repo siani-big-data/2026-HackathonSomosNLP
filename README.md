@@ -17,8 +17,6 @@
 
 1xe is a research prototype for building a Canary Islands Spanish assistant that understands and uses Canary Spanish, with post-training over conversation datasets and optional RAG over curated cultural sources such as Academia Canaria, Canariwiki, and GEVIC.
 
-[![1xe Architecture](figures/1xe.png)](figures/1xe.pdf)
-
 </div>
 
 ## Overview
@@ -66,30 +64,26 @@ Example:
 }
 ```
 
-## Repository layout
+## Training
 
-```text
-siani/
-  data/
-    academia_canaria/
-    canariwiki/
-    gevic/
-    post/
-  data_preparation/
-  post_training/
-outputs/
-figures/
-```
+The training pipeline starts from Qwen and adapts it with post-training datasets written in Canary Spanish. The main goal is to preserve the base model's general capabilities while teaching it a natural Canary dialect style.
 
-## Setup
+[![1xe Training](figures/1xe_training.png)](figures/1xe_training.pdf)
 
-```bash
-uv sync
-uv run python --version
-```
+## Inference
+
+At inference time, the model can run in plain conversational mode or with retrieval enabled. When RAG is active, the system looks up relevant context in curated Canary knowledge sources before generating the answer.
+
+[![1xe Inference](figures/1xe_generation.png)](figures/1xe_generation.pdf)
 
 ## Authors
 
 - [Óscar Rico Rodríguez](https://github.com/orr21)
 - [Ricardo Cárdenes](https://github.com/ricardocardn)
 - [José Juan Hernández Gálvez](https://github.com/josejuanhernandezgalvez)
+
+## License and copyright
+
+Copyright © 2026 Óscar Rico Rodríguez, Ricardo Cárdenes, and José Juan Hernández Gálvez.
+
+This project is released under the [MIT License](LICENSE).
