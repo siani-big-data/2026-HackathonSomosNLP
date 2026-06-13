@@ -15,9 +15,9 @@
 [![uv managed](https://img.shields.io/badge/uv-managed-222222?style=for-the-badge)](https://docs.astral.sh/uv/)
 [![Status prototype](https://img.shields.io/badge/status-research%20prototype-8B5CF6?style=for-the-badge)](#current-limitations)
 
-[![1xe Architecture](figures/1xe.png)](figures/1xe.pdf)
-
 1xe is a research prototype for building a Canary Islands Spanish assistant with a recognizable local voice, post-training over conversation datasets, and optional RAG over curated cultural sources such as Academia Canaria, Canariwiki, and GEVIC.
+
+[![1xe Architecture](figures/1xe.png)](figures/1xe.pdf)
 
 </div>
 
