@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import hashlib
 import json
@@ -50,6 +51,7 @@ DEFAULT_SYSTEM_PROMPT = (
 
 
 def main() -> None:
+    args = parse_args()
     checkpoint_dir = CHECKPOINT_DIR.resolve()
     if not checkpoint_dir.exists():
         raise FileNotFoundError(
@@ -105,7 +107,7 @@ def main() -> None:
             break
 
         effective_prompt = build_effective_prompt(prompt, conversation_history)
-        use_rag = should_use_rag(effective_prompt)
+        use_rag = args.always_rag or should_use_rag(effective_prompt)
         retrieved: list[dict[str, str]] = []
         if use_rag:
             retrieved = search_chunks(conn, effective_prompt, TOP_K)
@@ -132,6 +134,18 @@ def main() -> None:
         )
         if len(conversation_history) > MAX_HISTORY_MESSAGES:
             conversation_history[:] = conversation_history[-MAX_HISTORY_MESSAGES:]
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Interactive test for the normal RAG model.",
+    )
+    parser.add_argument(
+        "--always-rag",
+        action="store_true",
+        help="Always perform retrieval for every prompt, even when the heuristic would disable RAG.",
+    )
+    return parser.parse_args()
 
 
 def resolve_knowledge_dirs() -> list[Path]:
