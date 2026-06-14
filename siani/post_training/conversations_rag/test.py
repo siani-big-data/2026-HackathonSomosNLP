@@ -105,11 +105,12 @@ def main() -> None:
         if prompt.lower() in {"exit", "quit"}:
             break
 
+        rag_query = prompt
         effective_prompt = build_effective_prompt(prompt, conversation_history)
-        use_rag = ALWAYS_RAG or should_use_rag(effective_prompt)
+        use_rag = ALWAYS_RAG or should_use_rag(rag_query)
         retrieved: list[dict[str, str]] = []
         if use_rag:
-            retrieved = search_chunks(conn, effective_prompt, TOP_K)
+            retrieved = search_chunks(conn, rag_query, TOP_K)
             print("\nRetrieved context:\n")
             if not retrieved:
                 print("(no results)")
